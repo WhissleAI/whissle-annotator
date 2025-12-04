@@ -23,6 +23,7 @@ Before running the server, ensure your environment is correctly configured.
 
 1.  **Install Dependencies:**
     Navigate to the Python server directory and install the required packages.
+
     ```bash
     cd D:\z-whissle\meta-asr\data_processing\python_server
     pip install -r requirements.txt
@@ -39,6 +40,7 @@ Before running the server, ensure your environment is correctly configured.
 This server will handle the heavy lifting of downloading, transcribing, and annotating the audio files.
 
 1.  **Navigate to the server directory:**
+
     ```bash
     cd D:\z-whissle\meta-asr\data_processing\python_server
     ```
@@ -62,10 +64,11 @@ The notebook acts as a client to send requests to your running server.
 
 3.  **Configure the API Request:**
     In the **second code cell**, you will find the `payload` dictionary. Verify the following parameters:
-    *   `gcs_path`: Set this to the GCS path of your folder containing the soccer audio files. The current example uses `gs://stream2action-audio/youtube-videos/soccer_data`.
-    *   `output_jsonl_path`: This is the **absolute path on the server's local filesystem** where the results will be saved. The notebook uses `/home/dchauhan/workspace/meta-asr/data_processing/hello`. You should change this to a valid path on your machine, for example: `D:/z-whissle/meta-asr/data_processing/output`.
-    *   `annotations`: Ensure this list includes `"entity"` and `"intent"` to get the detailed soccer annotations.
-    *   `prompt`: This is correctly set to use the `custom_prompt` defined in the first cell.
+
+    - `gcs_path`: Set this to the GCS path of your folder containing the soccer audio files. The current example uses `gs://stream2action-audio/youtube-videos/soccer_data`.
+    - `output_jsonl_path`: This can be an absolute path (e.g., `D:/z-whissle/meta-asr/data_processing/output`) or a relative path (e.g., `output`). If relative, it will be resolved relative to `DEFAULT_OUTPUT_DIR` or `data_processing/outputs` by default.
+    - `annotations`: Ensure this list includes `"entity"` and `"intent"` to get the detailed soccer annotations.
+    - `prompt`: (Optional) You can provide a custom prompt, or omit it to use the default annotation prompt. The notebook example shows how to load a custom soccer-specific prompt from a file.
 
 4.  **Execute the Notebook Cells:**
     Run the cells in the notebook sequentially. The second cell will send the request to the running FastAPI server. The server will then begin processing the audio files from the GCS folder. This process may take some time depending on the number and length of the audio files.
@@ -76,14 +79,15 @@ Once the server has finished, the annotated data will be available in the output
 
 1.  **Locate the Output:**
     Navigate to the directory you set in `output_jsonl_path`. Inside, you will find subdirectories for each processed audio file. Each subdirectory contains:
-    *   A `segments` folder with the chunked audio clips.
-    *   An `annotations.jsonl` file with the detailed annotation data for each segment.
+
+    - A `segments` folder with the chunked audio clips.
+    - An `annotations.jsonl` file with the detailed annotation data for each segment.
 
 2.  **Understand the Output Format:**
     Each line in the `annotations.jsonl` file is a JSON object containing the transcription and the soccer-specific annotations as requested in the prompt, including:
-    *   `tokens`: A list of words from the transcription.
-    *   `tags`: A list of BIO tags (e.g., `B-PLAYER_NAME`, `I-TEAM_NAME`, `B-LIVE_COMMENTARY`) corresponding to each token.
-    *   `intent`: The overall intent of the sentence (e.g., `LIVE_COMMENTARY`).
+    - `tokens`: A list of words from the transcription.
+    - `tags`: A list of BIO tags (e.g., `B-PLAYER_NAME`, `I-TEAM_NAME`, `B-LIVE_COMMENTARY`) corresponding to each token.
+    - `intent`: The overall intent of the sentence (e.g., `LIVE_COMMENTARY`).
 
 ### **Part 2: Preparing and Uploading to Hugging Face**
 
@@ -92,25 +96,37 @@ After annotating your data, the same notebook helps you prepare and upload it.
 #### **Step 1: Aggregate Processed Data into a Dataset**
 
 1.  **Execute the aggregation cell:**
-    *   In the same notebook, run the cell under the markdown comment `"merge whole stuff into one dataset, before pushing into hf"`.
-    *   This script reads the processed files from the directory specified in `output_jsonl_path` (e.g., `D:\z-whissle\meta-asr\data_processing\hello`).
-    *   It then creates a final, structured dataset in `D:\z-whissle\meta-asr\final_datasets\combined_dataset`, which includes an `audio` folder and an `annotations.jsonl` file.
+    - In the same notebook, run the cell under the markdown comment `"merge whole stuff into one dataset, before pushing into hf"`.
+    - This script reads the processed files from the directory specified in `output_jsonl_path` (e.g., `D:\z-whissle\meta-asr\data_processing\hello`).
+    - It then creates a final, structured dataset in `D:\z-whissle\meta-asr\final_datasets\combined_dataset`, which includes an `audio` folder and an `annotations.jsonl` file.
 
 #### **Step 2: Push the Dataset to Hugging Face**
 
 1.  **Set your Hugging Face Token:**
-    *   In the last code cell of the notebook, replace the placeholder text `"user your own"` with your actual Hugging Face access token.
+
+    - In the last code cell of the notebook, replace the placeholder text `"user your own"` with your actual Hugging Face access token.
+
     ```python
     # Change this line
-    HF_TOKEN = "hf_YourAccessTokenHere" 
+    HF_TOKEN = "hf_YourAccessTokenHere"
     ```
 
 2.  **Execute the upload cell:**
-    *   Run this final cell. It will use your token to authenticate and then upload the contents of the `D:\z-whissle\meta-asr\final_datasets\combined_dataset` directory to a new or existing repository on your Hugging Face profile named `audio_combined_dataset`.
+    - Run this final cell. It will use your token to authenticate and then upload the contents of the `D:\z-whissle\meta-asr\final_datasets\combined_dataset` directory to a new or existing repository on your Hugging Face profile named `audio_combined_dataset`.
 
 ## General API Usage Examples
 
 The Jupyter notebooks in `data_processing/jupiter/` are designed for processing audio data from GCS.
+
+**For Postman and cURL usage**, see the comprehensive API documentation: [`data_processing/python_server/API_EXAMPLES.md`](python_server/API_EXAMPLES.md)
+
+This documentation includes:
+
+- Complete request/response examples
+- cURL commands ready to copy-paste
+- Postman collection setup guide
+- Troubleshooting tips
+- Information about default prompts and relative path handling
 
 ### 1. Processing a Single GCS Audio File
 
@@ -124,9 +140,9 @@ The notebook sends a POST request to the server with a JSON payload. The key fie
 - `user_id`: A unique identifier for the user making the request.
 - `gcs_path`: The full `gs://` path to the single audio file.
 - `model_choice`: The transcription model to use (e.g., "gemini").
-- `output_jsonl_path`: An absolute path on the **server's local filesystem** where the output `.jsonl` file will be saved.
+- `output_jsonl_path`: An absolute or relative path where the output will be saved. If relative, it will be resolved relative to `DEFAULT_OUTPUT_DIR` or `data_processing/outputs` by default.
 - `annotations`: A list of annotations to perform (e.g., "entity", "intent").
-- `prompt`: A custom prompt string to guide the annotation model.
+- `prompt`: (Optional) A custom prompt string to guide the annotation model. If not provided and entity/intent annotations are requested, a default prompt will be used automatically.
 
 **Jupyter Notebook Snippet**:
 

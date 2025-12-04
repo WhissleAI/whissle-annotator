@@ -483,7 +483,8 @@ async def trim_transcribe_annotate_endpoint(process_request: ProcessRequest):
 
                     # Gemini Annotation for BIO tags and intent
                     if requires_gemini_for_annotation and transcription_text and transcription_text.strip():
-                        prompt_type_for_gemini = process_request.prompt or None  # Use custom prompt if provided
+                        # Use custom prompt if provided, otherwise annotation function will use default prompt
+                        prompt_type_for_gemini = process_request.prompt if process_request.prompt else None
                         tokens, tags, intent, gemini_anno_err = await annotate_text_structured_with_gemini(
                             transcription_text,
                             prompt_type_for_gemini, 
@@ -685,7 +686,8 @@ async def create_annotated_manifest_endpoint(process_request: ProcessRequest):
                 prompt_type_for_gemini: Optional[str] = None
                 if requires_gemini_for_annotation and transcription_text and transcription_text.strip() != "":
                     if process_request.annotations and ("entity" in process_request.annotations or "intent" in process_request.annotations):
-                        prompt_type_for_gemini = process_request.prompt # Use user's custom prompt if provided
+                        # Use user's custom prompt if provided, otherwise annotation function will use default prompt
+                        prompt_type_for_gemini = process_request.prompt if process_request.prompt else None
                     
                     tokens, tags, intent, gemini_anno_err = await annotate_text_structured_with_gemini(
                         transcription_text, 
@@ -782,8 +784,13 @@ async def process_gcs_file_endpoint(request: GcsProcessRequest):
         SingleFileProcessResponse with processing results and status.
     """
     user_id = request.user_id
-    # base_dir = Path("/app/outputs")
+    # Handle both absolute and relative paths for output_jsonl_path
     output_jsonl_path = Path(request.output_jsonl_path)
+    if not output_jsonl_path.is_absolute():
+        # If relative, make it relative to a base output directory
+        base_output_dir = Path(os.getenv("DEFAULT_OUTPUT_DIR", str(Path(__file__).parent.parent / "outputs")))
+        output_jsonl_path = base_output_dir / output_jsonl_path
+        logger.info(f"User {user_id} - Relative path provided, using base output dir: {base_output_dir}")
     logger.info(f"User {user_id} - Received request to process GCS file: {request.gcs_path}. Output: {output_jsonl_path}")
    
     await websocket_manager.send_personal_message({"status": "request_received", "detail": f"Received request for {request.gcs_path}"}, user_id)
@@ -912,7 +919,13 @@ async def process_gcs_directory_endpoint(request: GcsProcessRequest):
         Dict with processing summary.
     """
     user_id = request.user_id
+    # Handle both absolute and relative paths for output_jsonl_path
     output_jsonl_path = Path(request.output_jsonl_path)
+    if not output_jsonl_path.is_absolute():
+        # If relative, make it relative to a base output directory
+        base_output_dir = Path(os.getenv("DEFAULT_OUTPUT_DIR", str(Path(__file__).parent.parent / "outputs")))
+        output_jsonl_path = base_output_dir / output_jsonl_path
+        logger.info(f"User {user_id} - Relative path provided, using base output dir: {base_output_dir}")
     logger.info(f"User {user_id} - Received request to process GCS directory: {request.gcs_path}. Output: {output_jsonl_path}")
     await websocket_manager.send_personal_message({"status": "request_received", "detail": f"Received directory request for {request.gcs_path}"}, user_id)
 

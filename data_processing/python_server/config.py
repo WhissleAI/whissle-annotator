@@ -11,8 +11,8 @@ from pydantic import BaseModel, Field as PydanticField, validator
 from typing import Optional, List
 
 # Load environment variables
-# load_dotenv('D:/z-whissle/meta-asr/.env') # Keep this for other env vars like NEXT_PUBLIC_API_URL
-load_dotenv("/home/dchauhan/workspace/meta-asr/.env")
+load_dotenv('D:/z-whissle/meta-asr/.env') # Keep this for other env vars like NEXT_PUBLIC_API_URL
+# load_dotenv("/home/dchauhan/workspace/meta-asr/.env")
 
 # Configure logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(module)s - %(funcName)s - %(message)s')
@@ -102,7 +102,7 @@ class ProcessRequest(BaseModel):
         example=["age", "gender", "emotion", "entity", "intent"]
     )
     prompt: Optional[str] = PydanticField(  # New field
-        None, description="Custom prompt for annotation, used when transcription type is annotated.",
+        None, description="Custom prompt for annotation, used when transcription type is annotated. If not provided and entity/intent annotations are requested, a default prompt will be used.",
         example="Transcribe and annotate the audio with BIO tags and intent."
     )
     segment_length_sec: Optional[float] = PydanticField( # New field for trimming
@@ -147,7 +147,7 @@ class GcsProcessRequest(BaseModel):
         example=["age", "gender", "emotion"]
     )
     prompt: Optional[str] = PydanticField(
-        None, description="Custom prompt for annotation, used if entity/intent annotations are requested.",
+        None, description="Custom prompt for annotation, used if entity/intent annotations are requested. If not provided, a default prompt will be used.",
         example="Focus on medical entities."
     )
 
@@ -174,9 +174,11 @@ class ProcessResponse(BaseModel):
     errors: int
 
 
-@validator('prompt')
-def validate_prompt(cls, v, values):
-    annotations = values.get('annotations')
-    if annotations and any(a in ['entity', 'intent'] for a in annotations) and not v:
-        raise ValueError("Prompt is required when entity or intent annotations are selected")
-    return v
+# Removed strict prompt validator - prompt is now optional with default fallback
+# The route handlers will use a default prompt from annotation.py if none is provided
+# @validator('prompt')
+# def validate_prompt(cls, v, values):
+#     annotations = values.get('annotations')
+#     if annotations and any(a in ['entity', 'intent'] for a in annotations) and not v:
+#         raise ValueError("Prompt is required when entity or intent annotations are selected")
+#     return v
