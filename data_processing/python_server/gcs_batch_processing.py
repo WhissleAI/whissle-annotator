@@ -4,7 +4,7 @@ from typing import List, Optional, Dict, Any
 from gcs_utils import list_gcs_files, download_gcs_blob, parse_gcs_path
 from websocket_utils import manager as websocket_manager
 from gcs_single_file_processing import _process_single_downloaded_file
-from config import ModelChoice
+from config import ModelChoice, LlmAnnotationModelChoice
 
 
 async def process_gcs_directory(
@@ -12,6 +12,7 @@ async def process_gcs_directory(
     gcs_dir_path: str,
     model_choice: ModelChoice,
     requested_annotations: Optional[List[str]],
+    llm_annotation_model: Optional[LlmAnnotationModelChoice],
     custom_prompt: Optional[str],
     output_jsonl_path: Path,
     path_type: Optional[str] = None
@@ -45,6 +46,7 @@ async def process_gcs_directory(
             user_id,
             model_choice,
             requested_annotations,
+            llm_annotation_model,
             custom_prompt,
             output_jsonl_path,
             f"gs://{bucket_name}/{blob_name}"

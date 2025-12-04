@@ -5,7 +5,7 @@ from typing import Dict, Any, Optional, List, Tuple
 import numpy as np
 import torch
 from config import (
-    ModelChoice, TARGET_SAMPLE_RATE, BioAnnotation, logger, device
+    ModelChoice, LlmAnnotationModelChoice, TARGET_SAMPLE_RATE, BioAnnotation, logger, device
 )
 from audio_utils import get_audio_duration, trim_audio, load_audio
 from session_store import get_user_api_key
@@ -66,6 +66,7 @@ async def _process_single_downloaded_file(
     user_id: str,
     model_choice: ModelChoice,
     requested_annotations: Optional[List[str]],
+    llm_annotation_model: Optional[LlmAnnotationModelChoice],
     custom_prompt: Optional[str],
     output_jsonl_path: Path,
     original_gcs_path: str
@@ -152,7 +153,10 @@ async def _process_single_downloaded_file(
 
     # --- Process Each Segment ---
     transcription_provider_name = model_choice.value
-    requires_gemini_for_annotation = requested_annotations and any(a in ["entity", "intent"] for a in requested_annotations)
+    # Resolve LLM annotation model (default to gemini if not provided)
+    resolved_llm_model = llm_annotation_model or LlmAnnotationModelChoice.gemini
+    requires_annotation = requested_annotations and any(a in ["entity", "intent"] for a in requested_annotations)
+    requires_gemini_for_annotation = requires_annotation and resolved_llm_model == LlmAnnotationModelChoice.gemini
     needs_local_models = requested_annotations and any(a in ["age", "gender", "emotion"] for a in requested_annotations)
 
     for segment_path in trimmed_segments:
@@ -300,49 +304,58 @@ async def _process_single_downloaded_file(
                         segment_result["error_details"].append(f"AnnotationError: {type(e).__name__}: {e}")
                         await websocket_manager.send_personal_message({"status": "annotation_failed", "detail": f"Annotation subtask error: {e}"}, user_id)
 
-            # Gemini Annotation
-            if requires_gemini_for_annotation and transcription_text:
-                await websocket_manager.send_personal_message({"status": "gemini_annotation_started", "detail": "Starting Gemini entity/intent annotation for segment..."}, user_id)
-                if not GEMINI_AVAILABLE:
-                    segment_result["error_details"].append("GeminiAnnotationError: Gemini SDK/api not available.")
-                    await websocket_manager.send_personal_message({"status": "gemini_annotation_failed", "detail": "Gemini SDK not available."}, user_id)
-                # elif not get_user_api_key(user_id, "gemini"):
-                #     segment_result["error_details"].append("GeminiAnnotationError: Gemini API key not found or session expired.")
-                #     await websocket_manager.send_personal_message({"status": "gemini_annotation_failed", "detail": "Gemini API key not found or session expired."}, user_id)
-                else:
-                    try:
-                        tokens, tags, intent, gemini_err = await annotate_text_structured_with_gemini(
-                            transcription_text,
-                            custom_prompt=custom_prompt,
-                            user_id=user_id
-                        )
-                        if gemini_err:
-                            segment_result["error_details"].append(f"GeminiAnnotationError: {gemini_err}")
-                            await websocket_manager.send_personal_message({"status": "gemini_annotation_failed", "detail": gemini_err}, user_id)
+            # LLM Annotation
+            if requires_annotation and transcription_text:
+                if resolved_llm_model == LlmAnnotationModelChoice.gemini:
+                    await websocket_manager.send_personal_message({"status": "gemini_annotation_started", "detail": "Starting Gemini entity/intent annotation for segment..."}, user_id)
+                    if not GEMINI_AVAILABLE:
+                        segment_result["error_details"].append("GeminiAnnotationError: Gemini SDK/api not available.")
+                        await websocket_manager.send_personal_message({"status": "gemini_annotation_failed", "detail": "Gemini SDK not available."}, user_id)
+                    # elif not get_user_api_key(user_id, "gemini"):
+                    #     segment_result["error_details"].append("GeminiAnnotationError: Gemini API key not found or session expired.")
+                    #     await websocket_manager.send_personal_message({"status": "gemini_annotation_failed", "detail": "Gemini API key not found or session expired."}, user_id)
+                    else:
+                        try:
+                            tokens, tags, intent, gemini_err = await annotate_text_structured_with_gemini(
+                                transcription_text,
+                                custom_prompt=custom_prompt,
+                                user_id=user_id
+                            )
+                            if gemini_err:
+                                segment_result["error_details"].append(f"GeminiAnnotationError: {gemini_err}")
+                                await websocket_manager.send_personal_message({"status": "gemini_annotation_failed", "detail": gemini_err}, user_id)
+                                if "intent" in requested_annotations:
+                                    segment_result["gemini_intent"] = "ANNOTATION_FAILED"
+                            else:
+                                # segment_result["prompt_used"] = custom_prompt if custom_prompt else "default_generated_prompt_behavior"
+                                if "entity" in requested_annotations and tokens and tags:
+                                    segment_result["bio_annotation_gemini"] = BioAnnotation(tokens=tokens, tags=tags).dict()
+                                    results["bio_annotation_gemini"].append(segment_result["bio_annotation_gemini"])
+                                if "intent" in requested_annotations and intent:
+                                    segment_result["gemini_intent"] = intent
+                                    results["gemini_intent"].append(intent)
+                                await websocket_manager.send_personal_message({
+                                    "status": "gemini_annotation_complete",
+                                    "data": {
+                                        "bio_annotation_gemini": segment_result["bio_annotation_gemini"],
+                                        "gemini_intent": segment_result["gemini_intent"],
+                                        # "prompt_used": segment_result["prompt_used"]
+                                    }
+                                }, user_id)
+                        except Exception as e:
+                            logger.error(f"User {user_id} - Gemini annotation failed for segment {segment_path.name}: {e}", exc_info=True)
+                            segment_result["error_details"].append(f"GeminiAnnotationError: {type(e).__name__}: {str(e)}")
+                            await websocket_manager.send_personal_message({"status": "gemini_annotation_failed", "detail": f"Gemini annotation error: {e}"}, user_id)
                             if "intent" in requested_annotations:
                                 segment_result["gemini_intent"] = "ANNOTATION_FAILED"
-                        else:
-                            # segment_result["prompt_used"] = custom_prompt if custom_prompt else "default_generated_prompt_behavior"
-                            if "entity" in requested_annotations and tokens and tags:
-                                segment_result["bio_annotation_gemini"] = BioAnnotation(tokens=tokens, tags=tags).dict()
-                                results["bio_annotation_gemini"].append(segment_result["bio_annotation_gemini"])
-                            if "intent" in requested_annotations and intent:
-                                segment_result["gemini_intent"] = intent
-                                results["gemini_intent"].append(intent)
-                            await websocket_manager.send_personal_message({
-                                "status": "gemini_annotation_complete",
-                                "data": {
-                                    "bio_annotation_gemini": segment_result["bio_annotation_gemini"],
-                                    "gemini_intent": segment_result["gemini_intent"],
-                                    # "prompt_used": segment_result["prompt_used"]
-                                }
-                            }, user_id)
-                    except Exception as e:
-                        logger.error(f"User {user_id} - Gemini annotation failed for segment {segment_path.name}: {e}", exc_info=True)
-                        segment_result["error_details"].append(f"GeminiAnnotationError: {type(e).__name__}: {str(e)}")
-                        await websocket_manager.send_personal_message({"status": "gemini_annotation_failed", "detail": f"Gemini annotation error: {e}"}, user_id)
-                        if "intent" in requested_annotations:
-                            segment_result["gemini_intent"] = "ANNOTATION_FAILED"
+                else:
+                    # Unsupported LLM annotation model
+                    error_msg = f"Annotation model '{resolved_llm_model.value}' is not supported; please use 'gemini' for now."
+                    segment_result["error_details"].append(error_msg)
+                    segment_result["annotation_model_error"] = error_msg
+                    await websocket_manager.send_personal_message({"status": "annotation_failed", "detail": error_msg}, user_id)
+                    if "intent" in requested_annotations:
+                        segment_result["gemini_intent"] = "MODEL_NOT_SUPPORTED"
 
             elif requested_annotations and not transcription_text:
                 segment_result["error_details"].append("AnnotationSkipped: Transcription failed or was empty.")
@@ -363,6 +376,7 @@ async def _process_single_downloaded_file(
                 "emotion": segment_result["emotion"],
                 "bio_annotation_gemini": segment_result["bio_annotation_gemini"],
                 "gemini_intent": segment_result["gemini_intent"],
+                "annotation_model_error": segment_result.get("annotation_model_error"),
                 # "prompt_used": segment_result["prompt_used"],
                 "error": "; ".join(segment_result["error_details"]) if segment_result["error_details"] else None
             }

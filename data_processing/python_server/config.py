@@ -81,6 +81,12 @@ class ModelChoice(str, Enum):
     whissle = "whissle"
     deepgram = "deepgram"
 
+# LLM Annotation Model Choice enum
+class LlmAnnotationModelChoice(str, Enum):
+    gemini = "gemini"
+    openai = "openai"
+    ollama = "ollama"
+
 USER_API_KEY_TTL_SECONDS = 60 * 60   # 60 minutes
 
 class UserApiKey(BaseModel):
@@ -95,11 +101,22 @@ class InitSessionRequest(BaseModel):
 class ProcessRequest(BaseModel):
     user_id: str = PydanticField(..., description="Unique identifier for the user.", example="user_123")
     directory_path: str = PydanticField(..., description="Absolute path to the directory containing audio files.", example="/path/to/audio")
-    model_choice: ModelChoice = PydanticField(..., description="The transcription model to use.")
+    transcriber_choice: Optional[str] = PydanticField(
+        None, description="The transcription model to use (whissle, gemini, deepgram). Takes precedence over model_choice if both are provided.",
+        example="whissle"
+    )
+    model_choice: Optional[ModelChoice] = PydanticField(
+        None, description="[DEPRECATED] The transcription model to use. Use transcriber_choice instead. Kept for backward compatibility.",
+        example="whissle"
+    )
     output_jsonl_path: str = PydanticField(..., description="Absolute path for the output JSONL file.", example="/path/to/output/results.jsonl")
     annotations: Optional[List[str]] = PydanticField(
         None, description="List of annotations to include (age, gender, emotion, entity, intent).",
         example=["age", "gender", "emotion", "entity", "intent"]
+    )
+    llm_annotation_model: Optional[LlmAnnotationModelChoice] = PydanticField(
+        None, description="The LLM model to use for annotation (entity, intent). Currently only 'gemini' is supported. Defaults to 'gemini' if not provided.",
+        example="gemini"
     )
     prompt: Optional[str] = PydanticField(  # New field
         None, description="Custom prompt for annotation, used when transcription type is annotated. If not provided and entity/intent annotations are requested, a default prompt will be used.",
@@ -135,16 +152,28 @@ class AnnotatedJsonlRecord(BaseModel):
     bio_annotation_gemini: Optional[BioAnnotation] = None
     bio_annotation_ollama: Optional[BioAnnotation] = None
     prompt_used: Optional[str] = None  # New field
+    annotation_model_error: Optional[str] = None  # Error message when unsupported LLM annotation model is requested
     error: Optional[str] = None
 
 class GcsProcessRequest(BaseModel):
     user_id: str = PydanticField(..., description="Unique identifier for the user.", example="user_123")
     gcs_path: str = PydanticField(..., description="Full GCS path to the audio file (e.g., gs://bucket_name/path/to/audio.wav).", example="gs://your-bucket/audio.wav")
-    model_choice: ModelChoice = PydanticField(..., description="The transcription model to use.")
+    transcriber_choice: Optional[str] = PydanticField(
+        None, description="The transcription model to use (whissle, gemini, deepgram). Takes precedence over model_choice if both are provided.",
+        example="whissle"
+    )
+    model_choice: Optional[ModelChoice] = PydanticField(
+        None, description="[DEPRECATED] The transcription model to use. Use transcriber_choice instead. Kept for backward compatibility.",
+        example="whissle"
+    )
     output_jsonl_path: str = PydanticField(..., description="Absolute path for the output JSONL file where GCS processing results will be saved.", example="/path/to/output/gcs_results.jsonl") # New field
     annotations: Optional[List[str]] = PydanticField(
         None, description="List of annotations to include (age, gender, emotion, entity, intent).",
         example=["age", "gender", "emotion"]
+    )
+    llm_annotation_model: Optional[LlmAnnotationModelChoice] = PydanticField(
+        None, description="The LLM model to use for annotation (entity, intent). Currently only 'gemini' is supported. Defaults to 'gemini' if not provided.",
+        example="gemini"
     )
     prompt: Optional[str] = PydanticField(
         None, description="Custom prompt for annotation, used if entity/intent annotations are requested. If not provided, a default prompt will be used.",

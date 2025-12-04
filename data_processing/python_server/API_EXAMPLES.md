@@ -22,11 +22,13 @@ http://localhost:8000
 **Note:** Session initialization is optional. If you don't initialize a session, the server will use environment variables for API keys (if configured).
 
 ### Endpoint
+
 ```
 POST /init_session/
 ```
 
 ### Request Body
+
 ```json
 {
   "user_id": "user_123",
@@ -48,6 +50,7 @@ POST /init_session/
 ```
 
 ### cURL Example
+
 ```bash
 curl -X POST "http://localhost:8000/init_session/" \
   -H "Content-Type: application/json" \
@@ -61,6 +64,7 @@ curl -X POST "http://localhost:8000/init_session/" \
 ```
 
 ### Response
+
 ```json
 {
   "message": "Session initialized/updated for user user_123"
@@ -74,20 +78,23 @@ curl -X POST "http://localhost:8000/init_session/" \
 Downloads a single audio file from Google Cloud Storage, transcribes it, and optionally annotates it.
 
 ### Endpoint
+
 ```
 POST /process_gcs_file/
 ```
 
 ### Request Body Parameters
 
-| Parameter | Type | Required | Description |
-|-----------|------|----------|-------------|
-| `user_id` | string | Yes | Unique identifier for the user |
-| `gcs_path` | string | Yes | Full GCS path (e.g., `gs://bucket-name/path/to/audio.wav`) |
-| `model_choice` | string | Yes | Transcription model: `"gemini"`, `"whissle"`, or `"deepgram"` |
-| `output_jsonl_path` | string | Yes | Output path (absolute or relative). If relative, will be relative to `DEFAULT_OUTPUT_DIR` or `data_processing/outputs` |
-| `annotations` | array | No | List of annotations: `["age", "gender", "emotion", "entity", "intent"]` |
-| `prompt` | string | No | Custom prompt for annotation. If not provided and entity/intent annotations are requested, a default prompt will be used |
+| Parameter              | Type   | Required | Description                                                                                                                                                                                                 |
+| ---------------------- | ------ | -------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `user_id`              | string | Yes      | Unique identifier for the user                                                                                                                                                                              |
+| `gcs_path`             | string | Yes      | Full GCS path (e.g., `gs://bucket-name/path/to/audio.wav`)                                                                                                                                                  |
+| `transcriber_choice`   | string | No\*     | Transcription model: `"whissle"`, `"gemini"`, or `"deepgram"`. Takes precedence over `model_choice` if both are provided                                                                                    |
+| `model_choice`         | string | No\*     | **[DEPRECATED]** Transcription model. Use `transcriber_choice` instead. Kept for backward compatibility. Either `transcriber_choice` or `model_choice` must be provided                                     |
+| `output_jsonl_path`    | string | Yes      | Output path (absolute or relative). If relative, will be relative to `DEFAULT_OUTPUT_DIR` or `data_processing/outputs`                                                                                      |
+| `annotations`          | array  | No       | List of annotations: `["age", "gender", "emotion", "entity", "intent"]`                                                                                                                                     |
+| `llm_annotation_model` | string | No       | LLM model for annotation (entity, intent): `"gemini"` (default), `"openai"`, `"ollama"`. Currently only `"gemini"` is supported; other values will result in annotation being skipped with an error message |
+| `prompt`               | string | No       | Custom prompt for annotation. If not provided and entity/intent annotations are requested, a default prompt will be used                                                                                    |
 
 ### Example 1: Basic Transcription Only
 
@@ -95,19 +102,20 @@ POST /process_gcs_file/
 {
   "user_id": "user_123",
   "gcs_path": "gs://your-bucket/audio/sample.wav",
-  "model_choice": "gemini",
+  "transcriber_choice": "gemini",
   "output_jsonl_path": "/tmp/output/results"
 }
 ```
 
 ### cURL Example 1
+
 ```bash
 curl -X POST "http://localhost:8000/process_gcs_file/" \
   -H "Content-Type: application/json" \
   -d '{
     "user_id": "user_123",
     "gcs_path": "gs://your-bucket/audio/sample.wav",
-    "model_choice": "gemini",
+    "transcriber_choice": "gemini",
     "output_jsonl_path": "/tmp/output/results"
   }'
 ```
@@ -118,22 +126,25 @@ curl -X POST "http://localhost:8000/process_gcs_file/" \
 {
   "user_id": "user_123",
   "gcs_path": "gs://your-bucket/audio/sample.wav",
-  "model_choice": "gemini",
+  "transcriber_choice": "deepgram",
   "output_jsonl_path": "results",
-  "annotations": ["age", "gender", "emotion", "entity", "intent"]
+  "annotations": ["age", "gender", "emotion", "entity", "intent"],
+  "llm_annotation_model": "gemini"
 }
 ```
 
 ### cURL Example 2
+
 ```bash
 curl -X POST "http://localhost:8000/process_gcs_file/" \
   -H "Content-Type: application/json" \
   -d '{
     "user_id": "user_123",
     "gcs_path": "gs://your-bucket/audio/sample.wav",
-    "model_choice": "gemini",
+    "transcriber_choice": "deepgram",
     "output_jsonl_path": "results",
-    "annotations": ["age", "gender", "emotion", "entity", "intent"]
+    "annotations": ["age", "gender", "emotion", "entity", "intent"],
+    "llm_annotation_model": "gemini"
   }'
 ```
 
@@ -143,28 +154,32 @@ curl -X POST "http://localhost:8000/process_gcs_file/" \
 {
   "user_id": "user_123",
   "gcs_path": "gs://your-bucket/audio/soccer_commentary.wav",
-  "model_choice": "gemini",
+  "transcriber_choice": "whissle",
   "output_jsonl_path": "/tmp/soccer_output",
   "annotations": ["entity", "intent"],
+  "llm_annotation_model": "gemini",
   "prompt": "You are an expert linguistic annotator specializing in soccer commentary. Identify player names, team names, match events, and commentary intent."
 }
 ```
 
 ### cURL Example 3
+
 ```bash
 curl -X POST "http://localhost:8000/process_gcs_file/" \
   -H "Content-Type: application/json" \
   -d '{
     "user_id": "user_123",
     "gcs_path": "gs://your-bucket/audio/soccer_commentary.wav",
-    "model_choice": "gemini",
+    "transcriber_choice": "whissle",
     "output_jsonl_path": "/tmp/soccer_output",
     "annotations": ["entity", "intent"],
+    "llm_annotation_model": "gemini",
     "prompt": "You are an expert linguistic annotator specializing in soccer commentary. Identify player names, team names, match events, and commentary intent."
   }'
 ```
 
 ### Response Example
+
 ```json
 {
   "original_gcs_path": "gs://your-bucket/audio/sample.wav",
@@ -192,6 +207,7 @@ curl -X POST "http://localhost:8000/process_gcs_file/" \
 Processes all audio files in a GCS directory (folder).
 
 ### Endpoint
+
 ```
 POST /process_gcs_directory/
 ```
@@ -206,22 +222,25 @@ Same as single file, but `gcs_path` should point to a directory (folder) instead
 {
   "user_id": "user_123",
   "gcs_path": "gs://your-bucket/audio_folder/",
-  "model_choice": "gemini",
+  "transcriber_choice": "deepgram",
   "output_jsonl_path": "/tmp/batch_output",
-  "annotations": ["age", "gender", "emotion", "entity", "intent"]
+  "annotations": ["age", "gender", "emotion", "entity", "intent"],
+  "llm_annotation_model": "gemini"
 }
 ```
 
 ### cURL Example 1
+
 ```bash
 curl -X POST "http://localhost:8000/process_gcs_directory/" \
   -H "Content-Type: application/json" \
   -d '{
     "user_id": "user_123",
     "gcs_path": "gs://your-bucket/audio_folder/",
-    "model_choice": "gemini",
+    "transcriber_choice": "deepgram",
     "output_jsonl_path": "/tmp/batch_output",
-    "annotations": ["age", "gender", "emotion", "entity", "intent"]
+    "annotations": ["age", "gender", "emotion", "entity", "intent"],
+    "llm_annotation_model": "gemini"
   }'
 ```
 
@@ -231,28 +250,32 @@ curl -X POST "http://localhost:8000/process_gcs_directory/" \
 {
   "user_id": "user_123",
   "gcs_path": "gs://stream2action-audio/youtube-videos/soccer_data",
-  "model_choice": "gemini",
+  "transcriber_choice": "whissle",
   "output_jsonl_path": "soccer_results",
   "annotations": ["entity", "intent"],
+  "llm_annotation_model": "gemini",
   "prompt": "You are an expert linguistic annotator specializing in soccer (football) commentary. Identify PLAYER_NAME, TEAM_NAME, GOAL, PENALTY, and other soccer-specific entities. Use intent types like LIVE_COMMENTARY, GOAL_ANNOUNCEMENT, etc."
 }
 ```
 
 ### cURL Example 2
+
 ```bash
 curl -X POST "http://localhost:8000/process_gcs_directory/" \
   -H "Content-Type: application/json" \
   -d '{
     "user_id": "user_123",
     "gcs_path": "gs://stream2action-audio/youtube-videos/soccer_data",
-    "model_choice": "gemini",
+    "transcriber_choice": "whissle",
     "output_jsonl_path": "soccer_results",
     "annotations": ["entity", "intent"],
+    "llm_annotation_model": "gemini",
     "prompt": "You are an expert linguistic annotator specializing in soccer (football) commentary. Identify PLAYER_NAME, TEAM_NAME, GOAL, PENALTY, and other soccer-specific entities."
   }'
 ```
 
 ### Response Example
+
 ```json
 {
   "message": "Processed 5 files. Saved 5 records successfully. Errors: 0.",
@@ -270,16 +293,19 @@ curl -X POST "http://localhost:8000/process_gcs_directory/" \
 Check which services and models are available.
 
 ### Endpoint
+
 ```
 GET /status
 ```
 
 ### cURL Example
+
 ```bash
 curl -X GET "http://localhost:8000/status"
 ```
 
 ### Response Example
+
 ```json
 {
   "message": "Welcome to the Audio Processing API (User Session Based)",
@@ -318,17 +344,33 @@ curl -X GET "http://localhost:8000/status"
 ### Annotations
 
 Available annotation types:
+
 - `"age"` - Predicts age group (0-17, 18-24, 25-34, etc.)
 - `"gender"` - Predicts gender (Male/Female)
 - `"emotion"` - Predicts emotion (Happy, Sad, Excited, etc.)
 - `"entity"` - BIO tagging for named entities (requires prompt or uses default)
 - `"intent"` - Intent classification (requires prompt or uses default)
 
-### Model Choices
+### Transcription Model Choices
 
-- `"gemini"` - Google Gemini 2.0 Flash
 - `"whissle"` - Whissle transcription service
+- `"gemini"` - Google Gemini 2.0 Flash
 - `"deepgram"` - Deepgram transcription service
+
+**Note:** Use `transcriber_choice` parameter (preferred) or the deprecated `model_choice` parameter. If both are provided, `transcriber_choice` takes precedence.
+
+### LLM Annotation Model Choices
+
+- `"gemini"` - Google Gemini 2.0 Flash (default, currently the only supported option)
+- `"openai"` - OpenAI models (not yet supported - will result in annotation being skipped with error message)
+- `"ollama"` - Ollama models (not yet supported - will result in annotation being skipped with error message)
+
+**Note:** Currently only `"gemini"` is supported for annotation. If you specify `"openai"` or `"ollama"`, the pipeline will:
+
+- Continue processing transcription and other annotations (age, gender, emotion)
+- Skip entity/intent annotation
+- Include an error message in the `annotation_model_error` field indicating the model is not supported
+- The request will still complete successfully, but without entity/intent annotations
 
 ### GCS Path Format
 
@@ -338,6 +380,7 @@ Available annotation types:
 ### WebSocket Status Updates
 
 For real-time status updates, connect to:
+
 ```
 WS /ws/gcs_status/{user_id}
 ```
@@ -357,29 +400,33 @@ WS /ws/gcs_status/{user_id}
 ## Troubleshooting
 
 ### Error: "User session is invalid or expired"
+
 - Solution: Call `/init_session/` first, or ensure environment variables have API keys configured
 
 ### Error: "Invalid GCS path format"
+
 - Solution: Ensure GCS path starts with `gs://` and includes bucket name and path
 
 ### Error: "Failed to create base output directory"
+
 - Solution: Check that the output path is valid and the server has write permissions
 
 ### Error: "API key for {provider} not found"
+
 - Solution: Initialize session with API keys or set environment variables
+
+### Error: "Annotation model '{model}' is not supported"
+
+- Solution: Currently only `"gemini"` is supported for annotation. Use `"llm_annotation_model": "gemini"` or omit the parameter (defaults to gemini)
 
 ---
 
 ## Additional Endpoints
 
 For local file processing (not GCS), see:
+
 - `POST /create_transcription_manifest/` - Transcribe local audio files
 - `POST /create_annotated_manifest/` - Transcribe and annotate local audio files
 - `POST /trim_transcribe_annotate/` - Trim, transcribe, and annotate local audio files
 
 For more details, visit: `http://localhost:8000/docs` (Swagger UI)
-
-
-
-
-

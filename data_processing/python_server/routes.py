@@ -12,7 +12,7 @@ from config import (
     ProcessRequest, ProcessResponse,
     TranscriptionJsonlRecord, AnnotatedJsonlRecord,
     logger, device,
-    ModelChoice,
+    ModelChoice, LlmAnnotationModelChoice,
     TARGET_SAMPLE_RATE,
     BioAnnotation,
     InitSessionRequest,
@@ -39,6 +39,58 @@ from gcs_single_file_processing import _process_single_downloaded_file
 
 
 router = APIRouter()
+
+def resolve_transcriber_choice(request: ProcessRequest) -> ModelChoice:
+    """
+    Resolves the transcription model choice from request.
+    Prioritizes transcriber_choice over deprecated model_choice.
+    Raises HTTPException if neither is provided or value is invalid.
+    """
+    # Check transcriber_choice first (new field)
+    if request.transcriber_choice:
+        try:
+            return ModelChoice(request.transcriber_choice.lower())
+        except ValueError:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Invalid transcriber_choice: '{request.transcriber_choice}'. Must be one of: whissle, gemini, deepgram"
+            )
+    
+    # Fall back to deprecated model_choice for backward compatibility
+    if request.model_choice:
+        return request.model_choice
+    
+    # Neither provided
+    raise HTTPException(
+        status_code=400,
+        detail="Either 'transcriber_choice' or 'model_choice' must be provided."
+    )
+
+def resolve_transcriber_choice_gcs(request: GcsProcessRequest) -> ModelChoice:
+    """
+    Resolves the transcription model choice from GCS request.
+    Prioritizes transcriber_choice over deprecated model_choice.
+    Raises HTTPException if neither is provided or value is invalid.
+    """
+    # Check transcriber_choice first (new field)
+    if request.transcriber_choice:
+        try:
+            return ModelChoice(request.transcriber_choice.lower())
+        except ValueError:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Invalid transcriber_choice: '{request.transcriber_choice}'. Must be one of: whissle, gemini, deepgram"
+            )
+    
+    # Fall back to deprecated model_choice for backward compatibility
+    if request.model_choice:
+        return request.model_choice
+    
+    # Neither provided
+    raise HTTPException(
+        status_code=400,
+        detail="Either 'transcriber_choice' or 'model_choice' must be provided."
+    )
 
 @router.post("/init_session/", summary="Initialize or Update User API Key Session", status_code=200)
 async def init_session_endpoint(session_request: InitSessionRequest):
@@ -94,7 +146,7 @@ async def create_transcription_manifest_endpoint(process_request: ProcessRequest
     if not is_user_session_valid(user_id):
         raise HTTPException(status_code=401, detail="User session is invalid or expired. Please re-initialize session.")
 
-    model_choice = process_request.model_choice
+    model_choice = resolve_transcriber_choice(process_request)
     provider_name = model_choice.value
 
     # Check service availability and user key
@@ -185,7 +237,7 @@ async def trim_audio_and_transcribe_endpoint(process_request: ProcessRequest):
     if not is_user_session_valid(user_id):
         raise HTTPException(status_code=401, detail="User session is invalid or expired. Please re-initialize session.")
 
-    model_choice = process_request.model_choice
+    model_choice = resolve_transcriber_choice(process_request)
     provider_name = model_choice.value
     segment_length_sec = process_request.segment_length_sec  # Assuming this is added to Магнитude
 
@@ -318,7 +370,7 @@ async def trim_transcribe_annotate_endpoint(process_request: ProcessRequest):
     if not is_user_session_valid(user_id):
         raise HTTPException(status_code=401, detail="User session is invalid or expired. Please re-initialize session.")
 
-    model_choice = process_request.model_choice
+    model_choice = resolve_transcriber_choice(process_request)
     provider_name = model_choice.value
     segment_length_sec = process_request.segment_length_sec
 
@@ -339,8 +391,12 @@ async def trim_transcribe_annotate_endpoint(process_request: ProcessRequest):
     if not get_user_api_key(user_id, provider_name):
         raise HTTPException(status_code=400, detail=f"API key for {provider_name.capitalize()} not found or session expired.")
 
+    # Resolve LLM annotation model (default to gemini if not provided)
+    llm_annotation_model = process_request.llm_annotation_model or LlmAnnotationModelChoice.gemini
+    
     # Check Gemini availability for annotation if needed
-    requires_gemini_for_annotation = process_request.annotations and any(a in ["entity", "intent"] for a in process_request.annotations)
+    requires_annotation = process_request.annotations and any(a in ["entity", "intent"] for a in process_request.annotations)
+    requires_gemini_for_annotation = requires_annotation and llm_annotation_model == LlmAnnotationModelChoice.gemini
     if requires_gemini_for_annotation:
         if not GEMINI_AVAILABLE:
             raise HTTPException(status_code=400, detail="Gemini SDK for annotation is not available on the server.")
@@ -481,31 +537,44 @@ async def trim_transcribe_annotate_endpoint(process_request: ProcessRequest):
                                     elif process_request.annotations and "emotion" in process_request.annotations and emotion_label is not None:
                                         record_data["emotion"] = emotion_label.replace("_", " ").title() if emotion_label != "SHORT_AUDIO" else "Short Audio"
 
-                    # Gemini Annotation for BIO tags and intent
-                    if requires_gemini_for_annotation and transcription_text and transcription_text.strip():
-                        # Use custom prompt if provided, otherwise annotation function will use default prompt
-                        prompt_type_for_gemini = process_request.prompt if process_request.prompt else None
-                        tokens, tags, intent, gemini_anno_err = await annotate_text_structured_with_gemini(
-                            transcription_text,
-                            prompt_type_for_gemini, 
-                            user_id,
-                            
-                        )
+                    # LLM Annotation for BIO tags and intent
+                    if requires_annotation and transcription_text and transcription_text.strip():
+                        if llm_annotation_model == LlmAnnotationModelChoice.gemini:
+                            # Use custom prompt if provided, otherwise annotation function will use default prompt
+                            prompt_type_for_gemini = process_request.prompt if process_request.prompt else None
+                            tokens, tags, intent, gemini_anno_err = await annotate_text_structured_with_gemini(
+                                transcription_text,
+                                prompt_type_for_gemini, 
+                                user_id,
+                                
+                            )
 
-                        if gemini_anno_err:
-                            file_error_details.append(f"GEMINI_ANNOTATION_FAIL: {gemini_anno_err}")
-                            if process_request.annotations and "intent" in process_request.annotations:
-                                record_data["gemini_intent"] = "ANNOTATION_FAILED"
+                            if gemini_anno_err:
+                                file_error_details.append(f"GEMINI_ANNOTATION_FAIL: {gemini_anno_err}")
+                                if process_request.annotations and "intent" in process_request.annotations:
+                                    record_data["gemini_intent"] = "ANNOTATION_FAILED"
+                            else:
+                                if process_request.annotations and "entity" in process_request.annotations and tokens and tags:
+                                    record_data["bio_annotation_gemini"] = BioAnnotation(tokens=tokens, tags=tags)
+                                if process_request.annotations and "intent" in process_request.annotations and intent:
+                                    record_data["gemini_intent"] = intent
+                                record_data["prompt_used"] = prompt_type_for_gemini[:100] if prompt_type_for_gemini else "default_generated_prompt_behavior"
                         else:
-                            if process_request.annotations and "entity" in process_request.annotations and tokens and tags:
-                                record_data["bio_annotation_gemini"] = BioAnnotation(tokens=tokens, tags=tags)
-                            if process_request.annotations and "intent" in process_request.annotations and intent:
-                                record_data["gemini_intent"] = intent
-                            record_data["prompt_used"] = prompt_type_for_gemini[:100] if prompt_type_for_gemini else "default_generated_prompt_behavior"
+                            # Unsupported LLM annotation model
+                            error_msg = f"Annotation model '{llm_annotation_model.value}' is not supported; please use 'gemini' for now."
+                            file_error_details.append(error_msg)
+                            record_data["annotation_model_error"] = error_msg
+                            if process_request.annotations and "intent" in process_request.annotations:
+                                record_data["gemini_intent"] = "MODEL_NOT_SUPPORTED"
 
-                    elif requires_gemini_for_annotation and (not transcription_text or not transcription_text.strip()):
-                        if process_request.annotations and "intent" in process_request.annotations:
-                            record_data["gemini_intent"] = "NO_SPEECH_FOR_ANNOTATION"
+                    elif requires_annotation and (not transcription_text or not transcription_text.strip()):
+                        if llm_annotation_model == LlmAnnotationModelChoice.gemini:
+                            if process_request.annotations and "intent" in process_request.annotations:
+                                record_data["gemini_intent"] = "NO_SPEECH_FOR_ANNOTATION"
+                        else:
+                            error_msg = f"Annotation model '{llm_annotation_model.value}' is not supported; please use 'gemini' for now."
+                            file_error_details.append(error_msg)
+                            record_data["annotation_model_error"] = error_msg
 
                     # Save record
                     final_error_msg = "; ".join(file_error_details) if file_error_details else None
@@ -553,7 +622,7 @@ async def create_annotated_manifest_endpoint(process_request: ProcessRequest):
     if not is_user_session_valid(user_id):
         raise HTTPException(status_code=401, detail="User session is invalid or expired. Please re-initialize session.")
 
-    model_choice = process_request.model_choice
+    model_choice = resolve_transcriber_choice(process_request)
     transcription_provider_name = model_choice.value
 
     # Check transcription model availability and user key
@@ -570,8 +639,12 @@ async def create_annotated_manifest_endpoint(process_request: ProcessRequest):
     # if not get_user_api_key(user_id, transcription_provider_name):
     #     raise HTTPException(status_code=400, detail=f"API key for {transcription_provider_name.capitalize()} (transcription) not found for user or session expired.")
 
+    # Resolve LLM annotation model (default to gemini if not provided)
+    llm_annotation_model = process_request.llm_annotation_model or LlmAnnotationModelChoice.gemini
+    
     # Check Gemini availability for annotation if needed
-    requires_gemini_for_annotation = process_request.annotations and any(a in ["entity", "intent"] for a in process_request.annotations)
+    requires_annotation = process_request.annotations and any(a in ["entity", "intent"] for a in process_request.annotations)
+    requires_gemini_for_annotation = requires_annotation and llm_annotation_model == LlmAnnotationModelChoice.gemini
     if requires_gemini_for_annotation:
         if not GEMINI_AVAILABLE:
             raise HTTPException(status_code=400, detail="Gemini SDK for annotation is not available on the server.")
@@ -682,31 +755,43 @@ async def create_annotated_manifest_endpoint(process_request: ProcessRequest):
                                 elif process_request.annotations and "emotion" in process_request.annotations and emotion_label is not None:
                                     record_data["emotion"] = emotion_label.replace("_", " ").title() if emotion_label != "SHORT_AUDIO" else "Short Audio"
                 
-                # Gemini Annotation
-                prompt_type_for_gemini: Optional[str] = None
-                if requires_gemini_for_annotation and transcription_text and transcription_text.strip() != "":
-                    if process_request.annotations and ("entity" in process_request.annotations or "intent" in process_request.annotations):
-                        # Use user's custom prompt if provided, otherwise annotation function will use default prompt
-                        prompt_type_for_gemini = process_request.prompt if process_request.prompt else None
-                    
-                    tokens, tags, intent, gemini_anno_err = await annotate_text_structured_with_gemini(
-                        transcription_text, 
-                        custom_prompt=prompt_type_for_gemini, 
-                        user_id=user_id
-                    )
-                    if gemini_anno_err:
-                        file_error_details.append(f"GEMINI_ANNOTATION_FAIL: {gemini_anno_err}")
-                        if process_request.annotations and "intent" in process_request.annotations: record_data["gemini_intent"] = "ANNOTATION_FAILED"
+                # LLM Annotation
+                if requires_annotation and transcription_text and transcription_text.strip() != "":
+                    if llm_annotation_model == LlmAnnotationModelChoice.gemini:
+                        if process_request.annotations and ("entity" in process_request.annotations or "intent" in process_request.annotations):
+                            # Use user's custom prompt if provided, otherwise annotation function will use default prompt
+                            prompt_type_for_gemini = process_request.prompt if process_request.prompt else None
+                        
+                        tokens, tags, intent, gemini_anno_err = await annotate_text_structured_with_gemini(
+                            transcription_text, 
+                            custom_prompt=prompt_type_for_gemini, 
+                            user_id=user_id
+                        )
+                        if gemini_anno_err:
+                            file_error_details.append(f"GEMINI_ANNOTATION_FAIL: {gemini_anno_err}")
+                            if process_request.annotations and "intent" in process_request.annotations: record_data["gemini_intent"] = "ANNOTATION_FAILED"
+                        else:
+                            if process_request.annotations and "entity" in process_request.annotations and tokens and tags:
+                                 record_data["bio_annotation_gemini"] = BioAnnotation(tokens=tokens, tags=tags)
+                            if process_request.annotations and "intent" in process_request.annotations and intent:
+                                 record_data["gemini_intent"] = intent
+                        record_data["prompt_used"] = prompt_type_for_gemini[:100] if prompt_type_for_gemini else "default_generated_prompt_behavior" # Clarify what prompt was used
                     else:
-                        if process_request.annotations and "entity" in process_request.annotations and tokens and tags:
-                             record_data["bio_annotation_gemini"] = BioAnnotation(tokens=tokens, tags=tags)
-                        if process_request.annotations and "intent" in process_request.annotations and intent:
-                             record_data["gemini_intent"] = intent
-                    record_data["prompt_used"] = prompt_type_for_gemini[:100] if prompt_type_for_gemini else "default_generated_prompt_behavior" # Clarify what prompt was used
+                        # Unsupported LLM annotation model
+                        error_msg = f"Annotation model '{llm_annotation_model.value}' is not supported; please use 'gemini' for now."
+                        file_error_details.append(error_msg)
+                        record_data["annotation_model_error"] = error_msg
+                        if process_request.annotations and "intent" in process_request.annotations:
+                            record_data["gemini_intent"] = "MODEL_NOT_SUPPORTED"
                 
-                elif requires_gemini_for_annotation: # Case where transcription failed or was empty
-                    if not transcription_text or transcription_text.strip() == "":
-                        if process_request.annotations and "intent" in process_request.annotations: record_data["gemini_intent"] = "NO_SPEECH_FOR_ANNOTATION"
+                elif requires_annotation: # Case where transcription failed or was empty
+                    if llm_annotation_model == LlmAnnotationModelChoice.gemini:
+                        if not transcription_text or transcription_text.strip() == "":
+                            if process_request.annotations and "intent" in process_request.annotations: record_data["gemini_intent"] = "NO_SPEECH_FOR_ANNOTATION"
+                    else:
+                        error_msg = f"Annotation model '{llm_annotation_model.value}' is not supported; please use 'gemini' for now."
+                        file_error_details.append(error_msg)
+                        record_data["annotation_model_error"] = error_msg
                     # else: # This case should be covered by transcription_error already
                         # if process_request.annotations and "intent" in process_request.annotations: record_data["gemini_intent"] = "TRANSCRIPTION_FAILED_FOR_ANNOTATION"
 
@@ -784,6 +869,7 @@ async def process_gcs_file_endpoint(request: GcsProcessRequest):
         SingleFileProcessResponse with processing results and status.
     """
     user_id = request.user_id
+    model_choice = resolve_transcriber_choice_gcs(request)
     # Handle both absolute and relative paths for output_jsonl_path
     output_jsonl_path = Path(request.output_jsonl_path)
     if not output_jsonl_path.is_absolute():
@@ -847,8 +933,9 @@ async def process_gcs_file_endpoint(request: GcsProcessRequest):
         processing_results = await _process_single_downloaded_file(
             local_audio_path,
             user_id,
-            request.model_choice,
+            model_choice,
             request.annotations,
+            request.llm_annotation_model,
             request.prompt,
             output_jsonl_path,
             request.gcs_path
@@ -919,6 +1006,7 @@ async def process_gcs_directory_endpoint(request: GcsProcessRequest):
         Dict with processing summary.
     """
     user_id = request.user_id
+    model_choice = resolve_transcriber_choice_gcs(request)
     # Handle both absolute and relative paths for output_jsonl_path
     output_jsonl_path = Path(request.output_jsonl_path)
     if not output_jsonl_path.is_absolute():
@@ -945,8 +1033,9 @@ async def process_gcs_directory_endpoint(request: GcsProcessRequest):
     results = await process_gcs_directory(
         user_id=user_id,
         gcs_dir_path=request.gcs_path,
-        model_choice=request.model_choice,
+        model_choice=model_choice,
         requested_annotations=request.annotations,
+        llm_annotation_model=request.llm_annotation_model,
         custom_prompt=request.prompt,
         output_jsonl_path=output_jsonl_path,
         path_type=getattr(request, "path_type", None)
