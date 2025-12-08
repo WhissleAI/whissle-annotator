@@ -952,7 +952,9 @@ async def process_gcs_file_endpoint(request: GcsProcessRequest):
             request.llm_annotation_model,
             request.prompt,
             output_jsonl_path,
-            request.gcs_path
+            request.gcs_path,
+            request.segment_length_sec,
+            request.segment_overlap_sec
         )
 
         status_msg = f"File processed. Results saved to {output_jsonl_path}"
@@ -1052,7 +1054,9 @@ async def process_gcs_directory_endpoint(request: GcsProcessRequest):
         llm_annotation_model=request.llm_annotation_model,
         custom_prompt=request.prompt,
         output_jsonl_path=output_jsonl_path,
-        path_type=getattr(request, "path_type", None)
+        path_type=getattr(request, "path_type", None),
+        segment_length_sec=request.segment_length_sec,
+        segment_overlap_sec=request.segment_overlap_sec
     )
     return results
 

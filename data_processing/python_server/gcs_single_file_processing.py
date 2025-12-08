@@ -69,10 +69,12 @@ async def _process_single_downloaded_file(
     llm_annotation_model: Optional[LlmAnnotationModelChoice],
     custom_prompt: Optional[str],
     output_jsonl_path: Path,
-    original_gcs_path: str
+    original_gcs_path: str,
+    segment_length_sec: Optional[float] = None,
+    segment_overlap_sec: Optional[float] = None
 ) -> Dict[str, Any]:
     """
-    Processes a single downloaded audio file by chunking (if >30s), transcribing, and optionally annotating.
+    Processes a single downloaded audio file by chunking, transcribing, and optionally annotating.
     Sends progress updates via WebSocket and returns aggregated results for all segments.
     
     Args:
@@ -80,9 +82,12 @@ async def _process_single_downloaded_file(
         user_id: User identifier for API key and WebSocket communication.
         model_choice: Selected transcription model (whissle, gemini, deepgram).
         requested_annotations: List of requested annotations (e.g., entity, intent, age, gender, emotion).
+        llm_annotation_model: LLM model to use for annotation (entity, intent). Defaults to gemini.
         custom_prompt: Optional custom prompt for Gemini annotation.
         output_jsonl_path: Path to save JSONL results.
         original_gcs_path: Original GCS path for reference in output.
+        segment_length_sec: Desired length of audio segments in seconds. Defaults to 30 seconds if not provided.
+        segment_overlap_sec: Overlap between audio segments in seconds. Defaults to 10 seconds if not provided.
     
     Returns:
         Dictionary containing aggregated results and errors across all segments.
@@ -115,8 +120,25 @@ async def _process_single_downloaded_file(
         return results  # Early return if duration fails
 
     # --- Trim Audio ---
-    segment_length_ms = 30 * 1000  # 30 seconds default
-    overlap_ms = 10 * 1000  # 10 seconds default overlap
+    segment_length_sec = segment_length_sec or 30.0  # Default to 30 seconds
+    segment_overlap_sec = segment_overlap_sec or 10.0  # Default to 10 seconds
+    
+    # Validate segment parameters
+    if segment_length_sec <= 0:
+        results["error_details"].append(f"TrimmingError: Invalid segment length ({segment_length_sec}s). Must be > 0.")
+        await websocket_manager.send_personal_message({"status": "trimming_failed", "detail": f"Invalid segment length: {segment_length_sec}s"}, user_id)
+        return results
+    if segment_overlap_sec < 0:
+        results["error_details"].append(f"TrimmingError: Invalid segment overlap ({segment_overlap_sec}s). Must be >= 0.")
+        await websocket_manager.send_personal_message({"status": "trimming_failed", "detail": f"Invalid segment overlap: {segment_overlap_sec}s"}, user_id)
+        return results
+    if segment_overlap_sec >= segment_length_sec:
+        results["error_details"].append(f"TrimmingError: Segment overlap ({segment_overlap_sec}s) must be < segment length ({segment_length_sec}s).")
+        await websocket_manager.send_personal_message({"status": "trimming_failed", "detail": f"Overlap must be < segment length"}, user_id)
+        return results
+    
+    segment_length_ms = int(segment_length_sec * 1000)
+    overlap_ms = int(segment_overlap_sec * 1000)
     
     # Extract the filename from GCS path (last part after '/')
     gcs_filename = Path(original_gcs_path).stem  # Gets filename without extension

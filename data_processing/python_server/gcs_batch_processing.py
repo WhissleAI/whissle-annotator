@@ -15,7 +15,9 @@ async def process_gcs_directory(
     llm_annotation_model: Optional[LlmAnnotationModelChoice],
     custom_prompt: Optional[str],
     output_jsonl_path: Path,
-    path_type: Optional[str] = None
+    path_type: Optional[str] = None,
+    segment_length_sec: Optional[float] = None,
+    segment_overlap_sec: Optional[float] = None
 ) -> Dict[str, Any]:
     """
     Processes all .wav files in a GCS directory: downloads, transcribes/annotates, and saves results.
@@ -49,7 +51,9 @@ async def process_gcs_directory(
             llm_annotation_model,
             custom_prompt,
             output_jsonl_path,
-            f"gs://{bucket_name}/{blob_name}"
+            f"gs://{bucket_name}/{blob_name}",
+            segment_length_sec,
+            segment_overlap_sec
         )
         results.append(single_result)
         try:

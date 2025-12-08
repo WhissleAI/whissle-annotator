@@ -183,6 +183,14 @@ class GcsProcessRequest(BaseModel):
         None, description="Custom prompt for annotation, used if entity/intent annotations are requested. If not provided, a default prompt will be used.",
         example="Focus on medical entities."
     )
+    segment_length_sec: Optional[float] = PydanticField(
+        None, description="Desired length of audio segments in seconds. Defaults to 30 seconds if not provided.",
+        example=30.0
+    )
+    segment_overlap_sec: Optional[float] = PydanticField(
+        None, description="Overlap between audio segments in seconds. Defaults to 10 seconds if not provided.",
+        example=10.0
+    )
 
 class SingleFileProcessResponse(BaseModel):
     original_gcs_path: str
