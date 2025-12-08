@@ -115,7 +115,8 @@ async def _process_single_downloaded_file(
         return results  # Early return if duration fails
 
     # --- Trim Audio ---
-    segment_length_ms = 30 * 1000  # 30 seconds
+    segment_length_ms = 30 * 1000  # 30 seconds default
+    overlap_ms = 10 * 1000  # 10 seconds default overlap
     
     # Extract the filename from GCS path (last part after '/')
     gcs_filename = Path(original_gcs_path).stem  # Gets filename without extension
@@ -139,7 +140,7 @@ async def _process_single_downloaded_file(
         "detail": f"Creating segments directory: {segments_dir}"
     }, user_id)
     try:
-        trimmed_segments = await asyncio.to_thread(trim_audio, local_audio_path, segment_length_ms, trimmed_audio_dir)
+        trimmed_segments = await asyncio.to_thread(trim_audio, local_audio_path, segment_length_ms, trimmed_audio_dir, overlap_ms)
         if not trimmed_segments:
             results["error_details"].append(f"TrimmingError: No segments created for {local_audio_path.name}")
             await websocket_manager.send_personal_message({"status": "trimming_failed", "detail": "No segments created."}, user_id)

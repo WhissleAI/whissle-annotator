@@ -58,7 +58,7 @@ curl -X POST "http://localhost:8000/init_session/" \
     "user_id": "user_123",
     "api_keys": [
       {"provider": "gemini", "key": "your_gemini_api_key_here"},
-      {"provider": "whissle", "key": "your_whissle_key_here}
+      {"provider": "whissle", "key": "your_whissle_key_here"}
     ]
   }'
 ```

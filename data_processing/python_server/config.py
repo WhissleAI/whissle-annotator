@@ -123,7 +123,11 @@ class ProcessRequest(BaseModel):
         example="Transcribe and annotate the audio with BIO tags and intent."
     )
     segment_length_sec: Optional[float] = PydanticField( # New field for trimming
-        None, description="Desired length of audio segments in seconds. If provided, audio will be trimmed.",
+        None, description="Desired length of audio segments in seconds. If provided, audio will be trimmed. Defaults to 30 seconds if not specified.",
+        example=30.0
+    )
+    segment_overlap_sec: Optional[float] = PydanticField( # New field for trimming overlap
+        None, description="Overlap between audio segments in seconds. Defaults to 10 seconds if not provided.",
         example=10.0
     )
 

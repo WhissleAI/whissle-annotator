@@ -239,11 +239,18 @@ async def trim_audio_and_transcribe_endpoint(process_request: ProcessRequest):
 
     model_choice = resolve_transcriber_choice(process_request)
     provider_name = model_choice.value
-    segment_length_sec = process_request.segment_length_sec  # Assuming this is added to Магнитude
+    segment_length_sec = process_request.segment_length_sec or 30.0  # Default to 30 seconds
+    segment_overlap_sec = process_request.segment_overlap_sec or 10.0  # Default to 10 seconds
 
-    if not segment_length_sec or segment_length_sec <= 0:
-        raise HTTPException(status_code=400, detail="Invalid segment length provided.")
-    segment_length_ms = segment_length_sec * 1000
+    if segment_length_sec <= 0:
+        raise HTTPException(status_code=400, detail="Invalid segment length provided. Must be greater than 0.")
+    if segment_overlap_sec < 0:
+        raise HTTPException(status_code=400, detail="Invalid segment overlap provided. Must be >= 0.")
+    if segment_overlap_sec >= segment_length_sec:
+        raise HTTPException(status_code=400, detail="Segment overlap must be less than segment length.")
+    
+    segment_length_ms = int(segment_length_sec * 1000)
+    overlap_ms = int(segment_overlap_sec * 1000)
 
     # Check service availability and user key
     service_available = False
@@ -285,7 +292,7 @@ async def trim_audio_and_transcribe_endpoint(process_request: ProcessRequest):
             output_jsonl_path = file_specific_dir / "transcriptions.jsonl"
 
             # Trim audio
-            trimmed_segments = await asyncio.to_thread(trim_audio, audio_file, segment_length_ms, file_specific_dir)
+            trimmed_segments = await asyncio.to_thread(trim_audio, audio_file, segment_length_ms, file_specific_dir, overlap_ms)
             if not trimmed_segments:
                 logger.warning(f"No segments created for {audio_file.name}")
                 error_count += 1
@@ -372,11 +379,18 @@ async def trim_transcribe_annotate_endpoint(process_request: ProcessRequest):
 
     model_choice = resolve_transcriber_choice(process_request)
     provider_name = model_choice.value
-    segment_length_sec = process_request.segment_length_sec
+    segment_length_sec = process_request.segment_length_sec or 30.0  # Default to 30 seconds
+    segment_overlap_sec = process_request.segment_overlap_sec or 10.0  # Default to 10 seconds
 
-    if not segment_length_sec or segment_length_sec <= 0:
-        raise HTTPException(status_code=400, detail="Invalid segment length provided.")
-    segment_length_ms = segment_length_sec * 1000
+    if segment_length_sec <= 0:
+        raise HTTPException(status_code=400, detail="Invalid segment length provided. Must be greater than 0.")
+    if segment_overlap_sec < 0:
+        raise HTTPException(status_code=400, detail="Invalid segment overlap provided. Must be >= 0.")
+    if segment_overlap_sec >= segment_length_sec:
+        raise HTTPException(status_code=400, detail="Segment overlap must be less than segment length.")
+    
+    segment_length_ms = int(segment_length_sec * 1000)
+    overlap_ms = int(segment_overlap_sec * 1000)
 
     # Check transcription service availability and user key
     transcription_service_available = {
@@ -437,7 +451,7 @@ async def trim_transcribe_annotate_endpoint(process_request: ProcessRequest):
             output_jsonl_path = file_specific_dir / "transcriptions.jsonl"
 
             # Trim audio
-            trimmed_segments = await asyncio.to_thread(trim_audio, audio_file, segment_length_ms, file_specific_dir)
+            trimmed_segments = await asyncio.to_thread(trim_audio, audio_file, segment_length_ms, file_specific_dir, overlap_ms)
             if not trimmed_segments:
                 logger.warning(f"No segments created for {audio_file.name}")
                 error_count += 1
