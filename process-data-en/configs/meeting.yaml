@@ -1,0 +1,149 @@
+# Meeting Recording Domain Configuration
+# For processing team meetings, standups, status updates, and board meetings
+# Supports multilingual audio and structured extraction of decisions and action items
+
+domain:
+  name: "meeting_recording"
+  description: "Processing meeting recordings with diarization, multilingual transcription, entities/intents, and structured minutes"
+
+models:
+  age_gender: "audeering/wav2vec2-large-robust-6-ft-age-gender"
+  whisper: "openai/whisper-large-v3"  # Multilingual transcription
+  gemini: "gemini-2.0-flash"
+  deepgram: "nova-2-general"
+
+features:
+  diarization: true
+  entity_intent_extraction: true
+  structured_summary: true
+  gemini_transcription: true
+  deepgram_transcription: true
+
+processing:
+  chunk_duration: 30.0  # seconds
+  overlap_duration: 10.0  # seconds
+  min_speakers: 2        # Usually multiple attendees
+  max_speakers: 12       # Larger meetings supported
+
+# Set to "english" for English-only; set to null for Whisper auto detection
+language: "english"
+
+input:
+  # IMPORTANT: Update to your meetings audio root
+  directory: "/external4/datasets/strem2action-audio/meeting_recordings"
+  extensions: [".wav", ".mp3", ".mp4", ".m4a", ".webm"]
+
+output:
+  # IMPORTANT: Update as needed
+  directory: "/external4/datasets/strem2action-audio/meeting_recordings"
+  per_file_subdirs: false
+
+prompts:
+  gemini_transcription: |
+    Transcribe this meeting recording accurately in English.
+    Preserve conversational flow and note speaker changes where evident.
+    Pay attention to attendee names, agenda items, decisions, blockers, and next steps.
+    Output only the transcript without extra formatting.
+
+  gemini_entities_intents: |
+    Extract meeting-related entities and intents from the following text.
+
+    Entities to extract (with type labels):
+    - ATTENDEE_NAME: Names of people present in the meeting.
+    - ROLE: Roles or titles (PM, Engineer, Designer, etc.).
+    - AGENDA_ITEM: Topics listed or discussed.
+    - DECISION: Formal decisions taken.
+    - ACTION_ITEM: Tasks assigned with owner and due date if mentioned.
+    - BLOCKER: Issues preventing progress.
+    - RISK: Potential risks called out.
+    - DEADLINE: Dates or timeframes.
+    - MEETING_DATE: Date of the meeting, if stated.
+    - PROJECT_NAME: Project or initiative names.
+    - TOOL_OR_SYSTEM: Tools/platforms referenced (e.g., Jira, Slack, Salesforce).
+    - DOCUMENT: Docs referenced (PRD, spec, RFC, minutes).
+    - METRIC: KPIs or metrics discussed.
+    - LOCATION: Office/site, remote platform, or region.
+
+    Intents to identify:
+    - DISCUSSION: General discussion of topics.
+    - DECISION_MADE: A decision is formally recorded.
+    - QUESTION: A participant asks a question.
+    - ANSWER: A participant answers a question.
+    - STATUS_UPDATE: Sharing current status or progress.
+    - PLANNING: Planning upcoming work.
+    - RISK_CALL_OUT: Calling out a risk.
+    - BLOCKER_RAISED: Identifying a blocker.
+    - ASSIGNMENT: Assigning an action item to someone.
+    - FOLLOW_UP: Scheduling or agreeing on follow-ups.
+
+    Return JSON format:
+    {
+      "entities": [
+        {"text": "entity text", "type": "ENTITY_TYPE", "language": "detected_language"},
+        ...
+      ],
+      "intents": ["INTENT_1", "INTENT_2", ...],
+      "languages_detected": ["language1", "language2", ...]
+    }
+
+    Text to analyze:
+
+  gemini_structured: |
+    Extract a structured meeting summary and minutes.
+
+    Return JSON with these fields (include only if present):
+    {
+      "meeting_title": "Title or topic (if identifiable)",
+      "meeting_date": "YYYY-MM-DD or relative date",
+      "attendees": ["list of attendee names"],
+      "roles": [{"name": "person", "role": "title"}],
+      "agenda_items": ["topics discussed in order"],
+      "decisions": ["formal decisions taken"],
+      "action_items": [
+        {"owner": "name", "task": "description", "due_date": "YYYY-MM-DD|unspecified"}
+      ],
+      "blockers": ["items blocking progress"],
+      "risks": ["risks mentioned"],
+      "status_updates": [{"owner": "name", "summary": "brief update"}],
+      "next_steps": ["planned follow-ups or tasks"],
+      "documents_referenced": ["docs, PRDs, RFCs"],
+      "tools_systems": ["tools/platforms referenced"],
+      "overall_sentiment": "positive|neutral|negative|mixed"
+    }
+
+    Meeting content:
+
+# Multilingual processing settings
+multilingual:
+  enabled: true
+  primary_languages: ["english", "hindi", "spanish", "french", "german", "japanese", "korean", "chinese"]
+  handle_code_switching: true
+  translate_to_english: false
+
+entity_types:
+  - "ATTENDEE_NAME"
+  - "ROLE"
+  - "AGENDA_ITEM"
+  - "DECISION"
+  - "ACTION_ITEM"
+  - "BLOCKER"
+  - "RISK"
+  - "DEADLINE"
+  - "MEETING_DATE"
+  - "PROJECT_NAME"
+  - "TOOL_OR_SYSTEM"
+  - "DOCUMENT"
+  - "METRIC"
+  - "LOCATION"
+
+intent_categories:
+  - "DISCUSSION"
+  - "DECISION_MADE"
+  - "QUESTION"
+  - "ANSWER"
+  - "STATUS_UPDATE"
+  - "PLANNING"
+  - "RISK_CALL_OUT"
+  - "BLOCKER_RAISED"
+  - "ASSIGNMENT"
+  - "FOLLOW_UP"

@@ -1,0 +1,144 @@
+# Podcast Domain Configuration
+# For processing podcast episodes (monologues, interviews, panel discussions)
+# Supports multilingual audio and structured information extraction
+
+domain:
+  name: "podcast"
+  description: "Processing podcast episodes with diarization, multilingual transcription, and structured info extraction"
+
+models:
+  age_gender: "audeering/wav2vec2-large-robust-6-ft-age-gender"
+  whisper: "openai/whisper-large-v3"  # Multilingual transcription
+  gemini: "gemini-2.0-flash"
+  deepgram: "nova-2-general"
+
+features:
+  diarization: true
+  entity_intent_extraction: true
+  structured_summary: true
+  gemini_transcription: true   # Enable auxiliary transcription
+  deepgram_transcription: true
+
+processing:
+  chunk_duration: 30.0  # seconds
+  overlap_duration: 10.0  # seconds
+  min_speakers: 1        # Solo podcasts supported
+  max_speakers: 8        # Panel/roundtable episodes
+
+# NOTE: Set to "english" for English-only. Set to null to allow Whisper auto language detection.
+language: "english"
+
+input:
+  # IMPORTANT: Update to your podcast audio root
+  directory: "/external4/datasets/strem2action-audio/podcast_data"
+  extensions: [".wav", ".mp3", ".mp4", ".m4a", ".webm"]
+
+output:
+  # IMPORTANT: Update to your desired output directory
+  directory: "/external4/datasets/strem2action-audio/podcast_data"
+  per_file_subdirs: false  # Centralized output for batching
+
+prompts:
+  gemini_transcription: |
+    Transcribe this podcast audio to English text accurately.
+    Preserve conversational flow and speaker turns where evident.
+    Pay attention to guest names, show segments, topic changes, and cultural references.
+    Output only the transcript without extra formatting.
+
+  gemini_entities_intents: |
+    Extract podcast-related entities and intents from the following text.
+
+    Entities to extract (with type labels):
+    - HOST_NAME: Name(s) of podcast host(s).
+    - GUEST_NAME: Name(s) of podcast guest(s).
+    - EPISODE_TITLE: Title or subtitle of the episode if mentioned.
+    - SHOW_NAME: Name of the podcast/show.
+    - ORGANIZATION: Companies, institutions, media outlets.
+    - TOPIC: Main subjects discussed (technology, wellness, finance, etc.).
+    - PRODUCT_OR_SERVICE: Products/services discussed or endorsed.
+    - LOCATION: Cities, countries, venues, virtual platforms.
+    - TIME_REFERENCE: Dates, times, schedules.
+    - CULTURAL_REFERENCE: Pop-culture references and idioms.
+    - CALL_TO_ACTION: Prompts like "subscribe", "visit our site", "use code".
+    - SPONSOR: Sponsor names, ad reads, promo codes.
+    - RESOURCE: Books, articles, papers, websites referenced.
+
+    Intents to identify:
+    - INTERVIEW_QUESTION: Host asking a question.
+    - INTERVIEW_ANSWER: Guest answering.
+    - DISCUSSION: General conversation among participants.
+    - INTRODUCTION: Opening introductions or show intro.
+    - AD_READ: Sponsor message or promotional segment.
+    - CTA: Call to action (subscribe, share, visit).
+    - STORYTELLING: Narratives or anecdotes.
+    - EDUCATION_INFORMATION: Explanatory content.
+    - DEBATE: Disagreement or contrasting viewpoints.
+    - SUMMARY_WRAPUP: Closing summary or takeaways.
+
+    Return JSON format:
+    {
+      "entities": [
+        {"text": "entity text", "type": "ENTITY_TYPE", "language": "detected_language"},
+        ...
+      ],
+      "intents": ["INTENT_1", "INTENT_2", ...],
+      "languages_detected": ["language1", "language2", ...]
+    }
+
+    Text to analyze:
+
+  gemini_structured: |
+    Extract a structured summary of this podcast episode.
+
+    Return JSON with these fields (include only if present):
+    {
+      "show_name": "Podcast name (if identifiable)",
+      "episode_title": "Title or subtitle (if mentioned)",
+      "hosts": ["host names"],
+      "guests": ["guest names"],
+      "topics": ["main topics discussed"],
+      "key_points": ["major takeaways or arguments"],
+      "resources": ["books, articles, sites referenced"],
+      "sponsors": ["sponsor names mentioned"],
+      "call_to_actions": ["CTAs mentioned"],
+      "notable_quotes": ["memorable lines or statements"],
+      "segment_breaks": ["intro|discussion|ad_read|cta|wrapup"],
+      "languages_present": ["languages spoken"],
+      "overall_sentiment": "positive|neutral|negative|mixed"
+    }
+
+    Podcast content:
+
+# Multilingual processing settings
+multilingual:
+  enabled: true
+  primary_languages: ["english", "hindi", "spanish", "french", "german", "japanese", "korean", "chinese"]
+  handle_code_switching: true
+  translate_to_english: false
+
+entity_types:
+  - "HOST_NAME"
+  - "GUEST_NAME"
+  - "EPISODE_TITLE"
+  - "SHOW_NAME"
+  - "ORGANIZATION"
+  - "TOPIC"
+  - "PRODUCT_OR_SERVICE"
+  - "LOCATION"
+  - "TIME_REFERENCE"
+  - "CULTURAL_REFERENCE"
+  - "CALL_TO_ACTION"
+  - "SPONSOR"
+  - "RESOURCE"
+
+intent_categories:
+  - "INTERVIEW_QUESTION"
+  - "INTERVIEW_ANSWER"
+  - "DISCUSSION"
+  - "INTRODUCTION"
+  - "AD_READ"
+  - "CTA"
+  - "STORYTELLING"
+  - "EDUCATION_INFORMATION"
+  - "DEBATE"
+  - "SUMMARY_WRAPUP"
