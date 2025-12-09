@@ -207,9 +207,12 @@ def perform_pyannote_diarization(
             return None, err
 
         payload = status_resp.json()
+        logger.info("\u001b[32mRaw diarization payload for job %s: %s\u001b[0m", job_id, payload)
         status = payload.get("status")
         if status == "succeeded":
-            segments = payload.get("output", {}).get("segments", [])
+            output_data = payload.get("output", {}) or {}
+            diarization_segments = output_data.get("diarization")
+            segments = output_data.get("segments", []) or diarization_segments or []
             speaker_segments = []
             for segment in segments:
                 start = segment.get("start")
@@ -267,6 +270,7 @@ def segment_audio_by_speakers(
                 "duration": (segment.end - segment.start)
             })
         logger.info(f"Split {audio_path.name} into {len(segments_info)} speaker segments.")
+        logger.info("\u001b[32mExported speaker chunks: %s\u001b[0m", [info["speaker"] for info in segments_info])
     except Exception as exc:
         logger.error(f"Failed to split audio by speakers: {exc}", exc_info=True)
     return segments_info

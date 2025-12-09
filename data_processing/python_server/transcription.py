@@ -6,7 +6,7 @@ from pathlib import Path
 import asyncio
 import os
 from typing import Tuple, Optional
-from config import logger, GOOGLE_API_KEY # Removed WHISSLE_AUTH_TOKEN
+from config import logger, GOOGLE_API_KEY, DEEPGRAM_API_KEY # Removed WHISSLE_AUTH_TOKEN
 from models import GEMINI_AVAILABLE, WHISSLE_AVAILABLE, DEEPGRAM_AVAILABLE # Use *_AVAILABLE flags
 # Removed: from models import DEEPGRAM_CLIENT
 from session_store import get_user_api_key
@@ -188,7 +188,9 @@ async def transcribe_with_deepgram_single(audio_path: Path, user_id: str) -> Tup
 
     deepgram_api_key = get_user_api_key(user_id, "deepgram")
     if not deepgram_api_key:
-        return None, "Deepgram API key not found or session expired for user."
+        deepgram_api_key = DEEPGRAM_API_KEY
+    if not deepgram_api_key:
+        return None, "Deepgram API key not found in session or environment."
 
     try:
         # Initialize Deepgram client with the user-specific key
