@@ -23,7 +23,12 @@ from models import (
     age_gender_model, age_gender_processor,
     emotion_model, emotion_feature_extractor 
 )
-from transcription import transcribe_with_whissle_single, transcribe_with_gemini_single, transcribe_with_deepgram_single
+from transcription import (
+    transcribe_with_whissle_single,
+    transcribe_with_whissle_stt_single,
+    transcribe_with_gemini_single,
+    transcribe_with_deepgram_single
+)
 
 
 def predict_age_gender(audio_data, sampling_rate) -> Tuple[Optional[float], Optional[int], Optional[str]]:
@@ -271,6 +276,8 @@ async def _process_single_downloaded_file(
             transcription_error = None
             if model_choice == ModelChoice.whissle:
                 transcription_text, transcription_error = await transcribe_with_whissle_single(segment_path, user_id)
+            elif model_choice == ModelChoice.whissle_stt:
+                transcription_text, transcription_error = await transcribe_with_whissle_stt_single(segment_path, user_id)
             elif model_choice == ModelChoice.gemini:
                 transcription_text, transcription_error = await transcribe_with_gemini_single(segment_path, user_id)
             elif model_choice == ModelChoice.deepgram:

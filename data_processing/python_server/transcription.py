@@ -6,7 +6,8 @@ from pathlib import Path
 import asyncio
 import os
 from typing import Tuple, Optional
-from config import logger, GOOGLE_API_KEY, DEEPGRAM_API_KEY # Removed WHISSLE_AUTH_TOKEN
+import requests
+from config import logger, GOOGLE_API_KEY, DEEPGRAM_API_KEY, WHISSLE_STT_AUTH_TOKEN, WHISSLE_STT_API_URL # Removed WHISSLE_AUTH_TOKEN
 from models import GEMINI_AVAILABLE, WHISSLE_AVAILABLE, DEEPGRAM_AVAILABLE # Use *_AVAILABLE flags
 # Removed: from models import DEEPGRAM_CLIENT
 from session_store import get_user_api_key
@@ -41,6 +42,56 @@ async def transcribe_with_whissle_single(audio_path: Path, user_id: str, model_n
         else: return None, f"Unexpected Whissle response format: {type(response)}"
     except Exception as e:
         return None, f"Whissle SDK error: {type(e).__name__}: {e}"
+
+
+async def transcribe_with_whissle_stt_single(audio_path: Path, user_id: str) -> Tuple[Optional[str], Optional[str]]:
+    if not WHISSLE_AVAILABLE:
+        return None, "Whissle SDK is not available."
+
+    if not WHISSLE_STT_AUTH_TOKEN:
+        return None, "Whissle STT auth token is not configured."
+
+    if not WHISSLE_STT_API_URL:
+        return None, "Whissle STT endpoint is not configured."
+
+    def _perform_request():
+        with open(audio_path, "rb") as audio_file_obj:
+            files = {
+                "audio": (audio_path.name, audio_file_obj, get_mime_type(audio_path))
+            }
+            return requests.post(
+                WHISSLE_STT_API_URL,
+                params={"auth_token": WHISSLE_STT_AUTH_TOKEN},
+                files=files,
+                timeout=180
+            )
+
+    try:
+        response = await asyncio.to_thread(_perform_request)
+    except Exception as exc:
+        logger.error(f"Whissle STT request failed for {audio_path.name}: {exc}", exc_info=True)
+        return None, f"Whissle STT request failed: {type(exc).__name__}: {exc}"
+
+    if response.status_code != 200:
+        details = response.text
+        try:
+            details = response.json()
+        except ValueError:
+            pass
+        logger.error(f"Whissle STT returned {response.status_code}: {details}")
+        return None, f"Whissle STT error {response.status_code}: {details}"
+
+    try:
+        payload = response.json()
+    except ValueError as exc:
+        logger.error(f"Failed to parse Whissle STT response for {audio_path.name}: {exc}", exc_info=True)
+        return None, "Whissle STT response JSON parsing failed."
+
+    transcript = payload.get("transcript")
+    if transcript:
+        return transcript.strip(), None
+    logger.error(f"Whissle STT response missing transcript: {payload}")
+    return None, "Whissle STT response did not include a transcript."
 
 async def transcribe_with_gemini_single(audio_path: Path, user_id: str) -> Tuple[Optional[str], Optional[str]]:
     if not GEMINI_AVAILABLE:

@@ -11,7 +11,7 @@ from pydantic import BaseModel, Field as PydanticField, validator
 from typing import Optional, List
 
 # Load environment variables
-load_dotenv('D:/z-whissle/meta-asr/.env') # Keep this for other env vars like NEXT_PUBLIC_API_URL
+load_dotenv() # Keep this for other env vars like NEXT_PUBLIC_API_URL
 # load_dotenv("/home/dchauhan/workspace/meta-asr/.env")
 
 # Configure logging
@@ -22,6 +22,8 @@ logger = logging.getLogger(__name__)
 # API keys for downstream services
 GOOGLE_API_KEY = os.getenv("GOOGLE_API_KEY")
 WHISSLE_AUTH_TOKEN = os.getenv("WHISSLE_AUTH_TOKEN")
+WHISSLE_STT_AUTH_TOKEN = os.getenv("WHISSLE_STT_AUTH_TOKEN")
+WHISSLE_STT_API_URL = os.getenv("WHISSLE_STT_API_URL", "https://api.whissle.ai/v1/conversation/STT")
 DEEPGRAM_API_KEY = os.getenv("DEEPGRAM_API_KEY")
 PYANNOTEAI_API_KEY = os.getenv("PYANNOTEAI_API_KEY")
 AUDIO_EXTENSIONS = ['.wav', '.mp3', '.flac', '.ogg', '.m4a']
@@ -81,6 +83,7 @@ except Exception as e:
 class ModelChoice(str, Enum):
     gemini = "gemini"
     whissle = "whissle"
+    whissle_stt = "whissle-stt"
     deepgram = "deepgram"
 
 # LLM Annotation Model Choice enum
@@ -116,8 +119,8 @@ class ProcessRequest(BaseModel):
     user_id: str = PydanticField(..., description="Unique identifier for the user.", example="user_123")
     directory_path: str = PydanticField(..., description="Absolute path to the directory containing audio files.", example="/path/to/audio")
     transcriber_choice: Optional[str] = PydanticField(
-        None, description="The transcription model to use (whissle, gemini, deepgram). Takes precedence over model_choice if both are provided.",
-        example="whissle"
+        None, description="The transcription model to use (whissle, whissle-stt, gemini, deepgram). Takes precedence over model_choice if both are provided.",
+        example="whissle-stt"
     )
     model_choice: Optional[ModelChoice] = PydanticField(
         None, description="[DEPRECATED] The transcription model to use. Use transcriber_choice instead. Kept for backward compatibility.",
@@ -186,8 +189,8 @@ class GcsProcessRequest(BaseModel):
     user_id: str = PydanticField(..., description="Unique identifier for the user.", example="user_123")
     gcs_path: str = PydanticField(..., description="Full GCS path to the audio file (e.g., gs://bucket_name/path/to/audio.wav).", example="gs://your-bucket/audio.wav")
     transcriber_choice: Optional[str] = PydanticField(
-        None, description="The transcription model to use (whissle, gemini, deepgram). Takes precedence over model_choice if both are provided.",
-        example="whissle"
+        None, description="The transcription model to use (whissle, whissle-stt, gemini, deepgram). Takes precedence over model_choice if both are provided.",
+        example="whissle-stt"
     )
     model_choice: Optional[ModelChoice] = PydanticField(
         None, description="[DEPRECATED] The transcription model to use. Use transcriber_choice instead. Kept for backward compatibility.",

@@ -27,7 +27,12 @@ from models import (
     # Removed GEMINI_CONFIGURED, WHISSLE_CONFIGURED, DEEPGRAM_CONFIGURED as they are replaced by session checks
 )
 from audio_utils import validate_paths, discover_audio_files, load_audio, get_audio_duration, trim_audio # Added trim_audio
-from transcription import transcribe_with_whissle_single, transcribe_with_gemini_single, transcribe_with_deepgram_single
+from transcription import (
+    transcribe_with_whissle_single,
+    transcribe_with_whissle_stt_single,
+    transcribe_with_gemini_single,
+    transcribe_with_deepgram_single
+)
 from annotation import annotate_text_structured_with_gemini
 import json
 from session_store import init_user_session, is_user_session_valid, get_user_api_key # Added session_store imports
@@ -53,7 +58,7 @@ def resolve_transcriber_choice(request: ProcessRequest) -> ModelChoice:
         except ValueError:
             raise HTTPException(
                 status_code=400,
-                detail=f"Invalid transcriber_choice: '{request.transcriber_choice}'. Must be one of: whissle, gemini, deepgram"
+                detail=f"Invalid transcriber_choice: '{request.transcriber_choice}'. Must be one of: whissle, whissle-stt, gemini, deepgram"
             )
     
     # Fall back to deprecated model_choice for backward compatibility
@@ -79,8 +84,12 @@ def resolve_transcriber_choice_gcs(request: GcsProcessRequest) -> ModelChoice:
         except ValueError:
             raise HTTPException(
                 status_code=400,
-                detail=f"Invalid transcriber_choice: '{request.transcriber_choice}'. Must be one of: whissle, gemini, deepgram"
+                detail=f"Invalid transcriber_choice: '{request.transcriber_choice}'. Must be one of: whissle, whissle-stt, gemini, deepgram"
             )
+
+
+def _transcriber_requires_user_key(model_choice: ModelChoice) -> bool:
+    return model_choice != ModelChoice.whissle_stt
     
     # Fall back to deprecated model_choice for backward compatibility
     if request.model_choice:
@@ -151,7 +160,7 @@ async def create_transcription_manifest_endpoint(process_request: ProcessRequest
 
     # Check service availability and user key
     service_available = False
-    if model_choice == ModelChoice.whissle:
+    if model_choice in (ModelChoice.whissle, ModelChoice.whissle_stt):
         service_available = WHISSLE_AVAILABLE
     elif model_choice == ModelChoice.gemini:
         service_available = GEMINI_AVAILABLE
@@ -161,7 +170,7 @@ async def create_transcription_manifest_endpoint(process_request: ProcessRequest
     if not service_available:
         raise HTTPException(status_code=400, detail=f"{provider_name.capitalize()} SDK is not available on the server.")
 
-    if not get_user_api_key(user_id, provider_name):
+    if _transcriber_requires_user_key(model_choice) and not get_user_api_key(user_id, provider_name):
         raise HTTPException(status_code=400, detail=f"API key for {provider_name.capitalize()} not found for user or session expired.")
 
     dir_path, output_jsonl_path = validate_paths(process_request.directory_path, process_request.output_jsonl_path)
@@ -190,6 +199,8 @@ async def create_transcription_manifest_endpoint(process_request: ProcessRequest
                     duration = get_audio_duration(audio_file)
                     if model_choice == ModelChoice.whissle:
                         transcription_text, transcription_error = await transcribe_with_whissle_single(audio_file, user_id)
+                    elif model_choice == ModelChoice.whissle_stt:
+                        transcription_text, transcription_error = await transcribe_with_whissle_stt_single(audio_file, user_id)
                     elif model_choice == ModelChoice.gemini:
                         transcription_text, transcription_error = await transcribe_with_gemini_single(audio_file, user_id)
                     elif model_choice == ModelChoice.deepgram:
@@ -254,7 +265,7 @@ async def trim_audio_and_transcribe_endpoint(process_request: ProcessRequest):
 
     # Check service availability and user key
     service_available = False
-    if model_choice == ModelChoice.whissle:
+    if model_choice in (ModelChoice.whissle, ModelChoice.whissle_stt):
         service_available = WHISSLE_AVAILABLE
     elif model_choice == ModelChoice.gemini:
         service_available = GEMINI_AVAILABLE
@@ -264,7 +275,7 @@ async def trim_audio_and_transcribe_endpoint(process_request: ProcessRequest):
     if not service_available:
         raise HTTPException(status_code=400, detail=f"{provider_name.capitalize()} SDK is not available on the server.")
 
-    if not get_user_api_key(user_id, provider_name):
+    if _transcriber_requires_user_key(model_choice) and not get_user_api_key(user_id, provider_name):
         raise HTTPException(status_code=400, detail=f"API key for {provider_name.capitalize()} not found for user or session expired.")
 
     dir_path, _ = validate_paths(process_request.directory_path, process_request.output_jsonl_path)
@@ -310,6 +321,12 @@ async def trim_audio_and_transcribe_endpoint(process_request: ProcessRequest):
                         duration = get_audio_duration(audio_segment_path)
                         if model_choice == ModelChoice.whissle:
                             transcription_text, transcription_error = await transcribe_with_whissle_single(audio_segment_path, user_id)
+                        elif model_choice == ModelChoice.whissle_stt:
+                            transcription_text, transcription_error = await transcribe_with_whissle_stt_single(audio_segment_path, user_id)
+                        elif model_choice == ModelChoice.whissle_stt:
+                            transcription_text, transcription_error = await transcribe_with_whissle_stt_single(audio_segment_path, user_id)
+                        elif model_choice == ModelChoice.whissle_stt:
+                            transcription_text, transcription_error = await transcribe_with_whissle_stt_single(audio_segment_path, user_id)
                         elif model_choice == ModelChoice.gemini:
                             transcription_text, transcription_error = await transcribe_with_gemini_single(audio_segment_path, user_id)
                         elif model_choice == ModelChoice.deepgram:
@@ -395,6 +412,7 @@ async def trim_transcribe_annotate_endpoint(process_request: ProcessRequest):
     # Check transcription service availability and user key
     transcription_service_available = {
         ModelChoice.whissle: WHISSLE_AVAILABLE,
+        ModelChoice.whissle_stt: WHISSLE_AVAILABLE,
         ModelChoice.gemini: GEMINI_AVAILABLE,
         ModelChoice.deepgram: DEEPGRAM_AVAILABLE
     }.get(model_choice, False)
@@ -402,7 +420,7 @@ async def trim_transcribe_annotate_endpoint(process_request: ProcessRequest):
     if not transcription_service_available:
         raise HTTPException(status_code=400, detail=f"{provider_name.capitalize()} SDK is not available on the server.")
     
-    if not get_user_api_key(user_id, provider_name):
+    if _transcriber_requires_user_key(model_choice) and not get_user_api_key(user_id, provider_name):
         raise HTTPException(status_code=400, detail=f"API key for {provider_name.capitalize()} not found or session expired.")
 
     # Resolve LLM annotation model (default to gemini if not provided)
@@ -641,7 +659,7 @@ async def create_annotated_manifest_endpoint(process_request: ProcessRequest):
 
     # Check transcription model availability and user key
     transcription_service_available = False
-    if model_choice == ModelChoice.whissle:
+    if model_choice in (ModelChoice.whissle, ModelChoice.whissle_stt):
         transcription_service_available = WHISSLE_AVAILABLE
     elif model_choice == ModelChoice.gemini:
         transcription_service_available = GEMINI_AVAILABLE
@@ -707,6 +725,8 @@ async def create_annotated_manifest_endpoint(process_request: ProcessRequest):
 
                 if model_choice == ModelChoice.whissle:
                     transcription_text, transcription_error = await transcribe_with_whissle_single(audio_file, user_id)
+                elif model_choice == ModelChoice.whissle_stt:
+                    transcription_text, transcription_error = await transcribe_with_whissle_stt_single(audio_file, user_id)
                 elif model_choice == ModelChoice.gemini:
                     transcription_text, transcription_error = await transcribe_with_gemini_single(audio_file, user_id)
                 elif model_choice == ModelChoice.deepgram:
