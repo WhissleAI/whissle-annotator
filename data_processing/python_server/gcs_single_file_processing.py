@@ -7,7 +7,14 @@ import torch
 from config import (
     ModelChoice, LlmAnnotationModelChoice, TARGET_SAMPLE_RATE, BioAnnotation, logger, device
 )
-from audio_utils import get_audio_duration, trim_audio, load_audio
+from audio_utils import (
+    get_audio_duration,
+    trim_audio,
+    load_audio,
+    perform_pyannote_diarization,
+    segment_audio_by_speakers,
+    gcs_path_to_public_url
+)
 from session_store import get_user_api_key
 from websocket_utils import manager as websocket_manager
 from annotation import annotate_text_structured_with_gemini
@@ -70,6 +77,8 @@ async def _process_single_downloaded_file(
     custom_prompt: Optional[str],
     output_jsonl_path: Path,
     original_gcs_path: str,
+    enable_diarization: bool = False,
+    diarization_audio_url: Optional[str] = None,
     segment_length_sec: Optional[float] = None,
     segment_overlap_sec: Optional[float] = None
 ) -> Dict[str, Any]:
@@ -86,6 +95,8 @@ async def _process_single_downloaded_file(
         custom_prompt: Optional custom prompt for Gemini annotation.
         output_jsonl_path: Path to save JSONL results.
         original_gcs_path: Original GCS path for reference in output.
+        enable_diarization: Run precision-2 diarization and segment based on speakers when True.
+        diarization_audio_url: Public URL to use for api.pyannote.ai diarization job.
         segment_length_sec: Desired length of audio segments in seconds. Defaults to 30 seconds if not provided.
         segment_overlap_sec: Overlap between audio segments in seconds. Defaults to 10 seconds if not provided.
     
@@ -102,7 +113,8 @@ async def _process_single_downloaded_file(
         "gemini_intent": [],
         "prompt_used": None,
         "error_details": [],
-        "overall_error_summary": None
+        "overall_error_summary": None,
+        "speaker_transcriptions": []
     }
     segment_results = []  # Store results for each segment
     await websocket_manager.send_personal_message({"status": "processing_started", "detail": f"Processing file: {local_audio_path.name}"}, user_id)
@@ -161,18 +173,52 @@ async def _process_single_downloaded_file(
         "status": "trimming_started", 
         "detail": f"Creating segments directory: {segments_dir}"
     }, user_id)
-    try:
-        trimmed_segments = await asyncio.to_thread(trim_audio, local_audio_path, segment_length_ms, trimmed_audio_dir, overlap_ms)
-        if not trimmed_segments:
-            results["error_details"].append(f"TrimmingError: No segments created for {local_audio_path.name}")
-            await websocket_manager.send_personal_message({"status": "trimming_failed", "detail": "No segments created."}, user_id)
+
+    segments_for_processing: List[Dict[str, Any]] = []
+    diarization_error_message: Optional[str] = None
+
+    if enable_diarization:
+        await websocket_manager.send_personal_message({"status": "diarization_started", "detail": "Running pyannoteAI precision-2 diarization..."}, user_id)
+        diarization_url = diarization_audio_url or gcs_path_to_public_url(original_gcs_path)
+        if not diarization_url:
+            diarization_error_message = "DiarizationError: Unable to derive public URL for GCS path."
+            results["error_details"].append(diarization_error_message)
+            await websocket_manager.send_personal_message({"status": "diarization_failed", "detail": "Could not resolve audio URL for diarization."}, user_id)
+        else:
+            speaker_segments, api_error = await asyncio.to_thread(perform_pyannote_diarization, diarization_url)
+            if api_error:
+                diarization_error_message = f"DiarizationError: {api_error}"
+                results["error_details"].append(diarization_error_message)
+                await websocket_manager.send_personal_message({"status": "diarization_failed", "detail": api_error}, user_id)
+            elif speaker_segments:
+                segments_for_processing = await asyncio.to_thread(segment_audio_by_speakers, local_audio_path, speaker_segments, trimmed_audio_dir)
+                if segments_for_processing:
+                    await websocket_manager.send_personal_message({"status": "diarization_complete", "detail": f"Created {len(segments_for_processing)} speaker segments."}, user_id)
+                else:
+                    diarization_error_message = "DiarizationError: No speaker segments exported."
+                    results["error_details"].append(diarization_error_message)
+                    await websocket_manager.send_personal_message({"status": "diarization_failed", "detail": "No speaker segments created."}, user_id)
+
+    if not segments_for_processing:
+        try:
+            trimmed_paths = await asyncio.to_thread(trim_audio, local_audio_path, segment_length_ms, trimmed_audio_dir, overlap_ms)
+            if not trimmed_paths:
+                results["error_details"].append(f"TrimmingError: No segments created for {local_audio_path.name}")
+                await websocket_manager.send_personal_message({"status": "trimming_failed", "detail": "No segments created."}, user_id)
+                return results
+            segments_for_processing = [
+                {"path": p, "speaker": "SPEAKER_00", "start": None, "end": None, "duration": None}
+                for p in trimmed_paths
+            ]
+            await websocket_manager.send_personal_message({"status": "trimming_complete", "detail": f"Created {len(trimmed_paths)} segment(s)."}, user_id)
+        except Exception as e:
+            logger.error(f"User {user_id} - Failed to trim {local_audio_path.name}: {e}")
+            results["error_details"].append(f"TrimmingError: {str(e)}")
+            await websocket_manager.send_personal_message({"status": "trimming_failed", "detail": f"Failed to trim audio: {str(e)}"}, user_id)
             return results
-        await websocket_manager.send_personal_message({"status": "trimming_complete", "detail": f"Created {len(trimmed_segments)} segment(s)."}, user_id)
-    except Exception as e:
-        logger.error(f"User {user_id} - Failed to trim {local_audio_path.name}: {e}")
-        results["error_details"].append(f"TrimmingError: {str(e)}")
-        await websocket_manager.send_personal_message({"status": "trimming_failed", "detail": f"Failed to trim audio: {str(e)}"}, user_id)
-        return results
+    elif enable_diarization and segments_for_processing:
+        # In diarization flow we already reported success above.
+        pass
 
     # --- Process Each Segment ---
     transcription_provider_name = model_choice.value
@@ -182,7 +228,9 @@ async def _process_single_downloaded_file(
     requires_gemini_for_annotation = requires_annotation and resolved_llm_model == LlmAnnotationModelChoice.gemini
     needs_local_models = requested_annotations and any(a in ["age", "gender", "emotion"] for a in requested_annotations)
 
-    for segment_path in trimmed_segments:
+    for segment_info in segments_for_processing:
+        segment_path: Path = segment_info["path"]
+        speaker_label = segment_info.get("speaker", "SPEAKER_00")
         segment_result: Dict[str, Any] = {
             "segment_path": str(segment_path),
             "duration": None,
@@ -192,6 +240,9 @@ async def _process_single_downloaded_file(
             "emotion": None,
             "bio_annotation_gemini": None,
             "gemini_intent": None,
+            "speaker": speaker_label,
+            "segment_start": segment_info.get("start"),
+            "segment_end": segment_info.get("end"),
             "error_details": []
         }
         transcription_text: Optional[str] = None  # Ensure variable is always defined
@@ -397,6 +448,7 @@ async def _process_single_downloaded_file(
                 "age_group": segment_result["age_group"],
                 "gender": segment_result["gender"],
                 "emotion": segment_result["emotion"],
+                "speaker": segment_result.get("speaker"),
                 "bio_annotation_gemini": segment_result["bio_annotation_gemini"],
                 "gemini_intent": segment_result["gemini_intent"],
                 "annotation_model_error": segment_result.get("annotation_model_error"),
@@ -409,6 +461,14 @@ async def _process_single_downloaded_file(
                 f_out.write('\n')
             await websocket_manager.send_personal_message({"status": "segment_result_saved", "detail": f"Segment result saved to {output_jsonl_path.name}"}, user_id)
             segment_results.append(segment_result)
+            if segment_result.get("transcription"):
+                results["speaker_transcriptions"].append({
+                    "speaker": segment_result.get("speaker"),
+                    "transcription": segment_result.get("transcription"),
+                    "start": segment_result.get("segment_start"),
+                    "end": segment_result.get("segment_end"),
+                    "duration": segment_result.get("duration")
+                })
         except Exception as e:
             logger.error(f"User {user_id} - Failed to save segment result for {segment_path.name}: {e}")
             segment_result["error_details"].append(f"SaveError: {str(e)}")

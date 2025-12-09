@@ -4,9 +4,12 @@ import numpy as np
 import soundfile as sf
 import librosa
 import resampy
-from config import AUDIO_EXTENSIONS, TARGET_SAMPLE_RATE, logger
-from typing import Tuple, Optional, List
+import requests
+import time
+from config import AUDIO_EXTENSIONS, TARGET_SAMPLE_RATE, logger, PYANNOTEAI_API_KEY, SpeakerSegment
+from typing import Tuple, Optional, List, Dict, Any
 from fastapi import HTTPException
+from gcs_utils import parse_gcs_path
 from pydub import AudioSegment # Add pydub import
 
 def validate_paths(dir_path_str: str, output_path_str: str) -> Tuple[Path, Path]:
@@ -138,3 +141,132 @@ def trim_audio(audio_path: Path, segment_length_ms: int, output_dir: Path, overl
     except Exception as e:
         logger.error(f"Error trimming audio file {audio_path}: {e}", exc_info=True)
         return []
+
+
+def gcs_path_to_public_url(gcs_path: str) -> Optional[str]:
+    """Return a storage.googleapis.com URL for a GCS path if we can parse it."""
+    bucket, blob = parse_gcs_path(gcs_path)
+    if not bucket or not blob:
+        return None
+    return f"https://storage.googleapis.com/{bucket}/{blob}"
+
+
+def perform_pyannote_diarization(
+    audio_url: str,
+    api_key: Optional[str] = None,
+    polling_interval: int = 10,
+    timeout_seconds: int = 600
+) -> Tuple[Optional[List[SpeakerSegment]], Optional[str]]:
+    """
+    Creates a diarization job using pyannoteAI precision-2 and polls until completion.
+    Returns a list of SpeakerSegment or an error message.
+    """
+    api_key = api_key or PYANNOTEAI_API_KEY
+    if not api_key:
+        return None, "PYANNOTEAI_API_KEY not configured"
+
+    headers = {
+        "Authorization": f"Bearer {api_key}",
+        "Content-Type": "application/json"
+    }
+    payload = {"url": audio_url}
+
+    try:
+        response = requests.post("https://api.pyannote.ai/v1/diarize", headers=headers, json=payload, timeout=30)
+    except requests.RequestException as exc:
+        err = f"Diarization request failed: {type(exc).__name__}: {str(exc)}"
+        logger.error(err, exc_info=True)
+        return None, err
+
+    if response.status_code != 200:
+        err = f"Diarization API responded with {response.status_code}: {response.text}"
+        logger.error(err)
+        return None, err
+
+    job_data = response.json()
+    job_id = job_data.get("jobId")
+    if not job_id:
+        err = "Diarization API returned no jobId."
+        logger.error(err)
+        return None, err
+
+    logger.info(f"pyannoteAI diarization job created: {job_id}")
+    deadline = time.time() + timeout_seconds
+
+    while time.time() < deadline:
+        try:
+            status_resp = requests.get(f"https://api.pyannote.ai/v1/jobs/{job_id}", headers=headers, timeout=30)
+        except requests.RequestException as exc:
+            err = f"Failed to poll diarization job: {type(exc).__name__}: {str(exc)}"
+            logger.error(err, exc_info=True)
+            return None, err
+
+        if status_resp.status_code != 200:
+            err = f"Diarization status check failed: {status_resp.status_code} - {status_resp.text}"
+            logger.error(err)
+            return None, err
+
+        payload = status_resp.json()
+        status = payload.get("status")
+        if status == "succeeded":
+            segments = payload.get("output", {}).get("segments", [])
+            speaker_segments = []
+            for segment in segments:
+                start = segment.get("start")
+                end = segment.get("end")
+                speaker = segment.get("speaker", "SPEAKER_00")
+                if start is None or end is None:
+                    continue
+                speaker_segments.append(SpeakerSegment(start=float(start), end=float(end), speaker=speaker))
+            logger.info(f"pyannoteAI diarization completed with {len(speaker_segments)} segments.")
+            return speaker_segments, None
+        if status in ("failed", "canceled"):
+            err = f"Diarization job {status}: {payload.get('error')}"
+            logger.error(err)
+            return None, err
+
+        logger.info(f"Diarization job {job_id} is {status}, waiting {polling_interval}s")
+        time.sleep(polling_interval)
+
+    err = f"Diarization job timed out after {timeout_seconds} seconds."
+    logger.error(err)
+    return None, err
+
+
+def segment_audio_by_speakers(
+    audio_path: Path,
+    speaker_segments: List[SpeakerSegment],
+    output_dir: Path
+) -> List[Dict[str, Any]]:
+    """
+    Export audio chunks corresponding to speaker segments. Returns a list of dicts describing each chunk.
+    """
+    segments_info: List[Dict[str, Any]] = []
+    try:
+        audio = AudioSegment.from_file(audio_path)
+        output_dir.mkdir(parents=True, exist_ok=True)
+
+        for idx, segment in enumerate(speaker_segments):
+            start_ms = int(segment.start * 1000)
+            end_ms = int(segment.end * 1000)
+            start_ms = max(0, start_ms)
+            end_ms = min(len(audio), end_ms)
+            if start_ms >= end_ms:
+                continue
+
+            chunk = audio[start_ms:end_ms]
+            safe_speaker = "".join(ch if ch.isalnum() or ch in ["-", "_"] else "_" for ch in segment.speaker)
+            segment_path = output_dir / f"{audio_path.stem}_speaker_{safe_speaker}_seg_{idx}{audio_path.suffix}"
+            chunk.export(segment_path, format=audio_path.suffix[1:])
+
+            segments_info.append({
+                "path": segment_path,
+                "speaker": segment.speaker,
+                "start": segment.start,
+                "end": segment.end,
+                "duration": (segment.end - segment.start)
+            })
+        logger.info(f"Split {audio_path.name} into {len(segments_info)} speaker segments.")
+    except Exception as exc:
+        logger.error(f"Failed to split audio by speakers: {exc}", exc_info=True)
+    return segments_info

@@ -19,9 +19,11 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(
 logger = logging.getLogger(__name__)
 
 # Constants
+# API keys for downstream services
 GOOGLE_API_KEY = os.getenv("GOOGLE_API_KEY")
 WHISSLE_AUTH_TOKEN = os.getenv("WHISSLE_AUTH_TOKEN")
 DEEPGRAM_API_KEY = os.getenv("DEEPGRAM_API_KEY")
+PYANNOTEAI_API_KEY = os.getenv("PYANNOTEAI_API_KEY")
 AUDIO_EXTENSIONS = ['.wav', '.mp3', '.flac', '.ogg', '.m4a']
 TARGET_SAMPLE_RATE = 16000
 
@@ -87,6 +89,18 @@ class LlmAnnotationModelChoice(str, Enum):
     openai = "openai"
     ollama = "ollama"
 
+class SpeakerSegment(BaseModel):
+    start: float
+    end: float
+    speaker: str
+
+class SpeakerTranscription(BaseModel):
+    speaker: str
+    transcription: Optional[str] = None
+    start: Optional[float] = None
+    end: Optional[float] = None
+    duration: Optional[float] = None
+
 USER_API_KEY_TTL_SECONDS = 60 * 60   # 60 minutes
 
 class UserApiKey(BaseModel):
@@ -110,6 +124,14 @@ class ProcessRequest(BaseModel):
         example="whissle"
     )
     output_jsonl_path: str = PydanticField(..., description="Absolute path for the output JSONL file.", example="/path/to/output/results.jsonl")
+    enable_diarization: Optional[bool] = PydanticField(
+        False, description="Enable speaker diarization via pyannoteAI precision-2. Segments will follow speaker boundaries.",
+        example=False
+    )
+    diarization_audio_url: Optional[str] = PydanticField(
+        None, description="Public URL for the audio file used when diarization needs an accessible source.",
+        example="https://storage.googleapis.com/bucket/audio.wav"
+    )
     annotations: Optional[List[str]] = PydanticField(
         None, description="List of annotations to include (age, gender, emotion, entity, intent).",
         example=["age", "gender", "emotion", "entity", "intent"]
@@ -118,15 +140,15 @@ class ProcessRequest(BaseModel):
         None, description="The LLM model to use for annotation (entity, intent). Currently only 'gemini' is supported. Defaults to 'gemini' if not provided.",
         example="gemini"
     )
-    prompt: Optional[str] = PydanticField(  # New field
+    prompt: Optional[str] = PydanticField(
         None, description="Custom prompt for annotation, used when transcription type is annotated. If not provided and entity/intent annotations are requested, a default prompt will be used.",
         example="Transcribe and annotate the audio with BIO tags and intent."
     )
-    segment_length_sec: Optional[float] = PydanticField( # New field for trimming
+    segment_length_sec: Optional[float] = PydanticField(
         None, description="Desired length of audio segments in seconds. If provided, audio will be trimmed. Defaults to 30 seconds if not specified.",
         example=30.0
     )
-    segment_overlap_sec: Optional[float] = PydanticField( # New field for trimming overlap
+    segment_overlap_sec: Optional[float] = PydanticField(
         None, description="Overlap between audio segments in seconds. Defaults to 10 seconds if not provided.",
         example=10.0
     )
@@ -146,6 +168,7 @@ class AnnotatedJsonlRecord(BaseModel):
     audio_filepath: str
     text: Optional[str] = None
     original_transcription: Optional[str] = None
+    speaker: Optional[str] = None
     duration: Optional[float] = None
     task_name: Optional[str] = None
     gender: Optional[str] = None
@@ -170,7 +193,15 @@ class GcsProcessRequest(BaseModel):
         None, description="[DEPRECATED] The transcription model to use. Use transcriber_choice instead. Kept for backward compatibility.",
         example="whissle"
     )
-    output_jsonl_path: str = PydanticField(..., description="Absolute path for the output JSONL file where GCS processing results will be saved.", example="/path/to/output/gcs_results.jsonl") # New field
+    output_jsonl_path: str = PydanticField(..., description="Absolute path for the output JSONL file where GCS processing results will be saved.", example="/path/to/output/gcs_results.jsonl")
+    enable_diarization: Optional[bool] = PydanticField(
+        False, description="Enable speaker diarization via pyannoteAI precision-2. Segments will follow speaker boundaries.",
+        example=False
+    )
+    diarization_audio_url: Optional[str] = PydanticField(
+        None, description="Public URL for the audio file used when diarization needs an accessible source.",
+        example="https://storage.googleapis.com/bucket/audio.wav"
+    )
     annotations: Optional[List[str]] = PydanticField(
         None, description="List of annotations to include (age, gender, emotion, entity, intent).",
         example=["age", "gender", "emotion"]
@@ -206,6 +237,7 @@ class SingleFileProcessResponse(BaseModel):
     prompt_used: Optional[str] = None
     error_details: Optional[List[str]] = None # To capture a list of errors if multiple steps fail
     overall_error: Optional[str] = None # A summary error message
+    speaker_transcriptions: Optional[List[SpeakerTranscription]] = None
 
 class ProcessResponse(BaseModel):
     message: str

@@ -953,6 +953,8 @@ async def process_gcs_file_endpoint(request: GcsProcessRequest):
             request.prompt,
             output_jsonl_path,
             request.gcs_path,
+            request.enable_diarization,
+            request.diarization_audio_url,
             request.segment_length_sec,
             request.segment_overlap_sec
         )
@@ -985,7 +987,8 @@ async def process_gcs_file_endpoint(request: GcsProcessRequest):
             gemini_intent=get_first_item(processing_results.get("gemini_intent")),
             # prompt_used=processing_results.get("prompt_used"),
             error_details=processing_results.get("error_details"),
-            overall_error=processing_results.get("overall_error_summary")
+            overall_error=processing_results.get("overall_error_summary"),
+            speaker_transcriptions=processing_results.get("speaker_transcriptions")
         )
 
     except Exception as e:
